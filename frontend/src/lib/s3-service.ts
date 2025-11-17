@@ -135,3 +135,53 @@ export async function uploadFiles(
   return await Promise.all(uploadPromises);
 }
 
+/**
+ * Recursively upload a directory to S3
+ * @param localDir - Local directory path to upload
+ * @param s3Prefix - S3 key prefix (e.g., "results/job-123/attempt-0/")
+ * @returns Array of uploaded S3 URLs
+ */
+export async function uploadDirectory(
+  localDir: string,
+  s3Prefix: string
+): Promise<string[]> {
+  const { readdir, stat, readFile } = await import("fs/promises");
+  const { join } = await import("path");
+  
+  const uploadedUrls: string[] = [];
+  
+  async function uploadRecursive(dir: string, prefix: string): Promise<void> {
+    const entries = await readdir(dir);
+    
+    for (const entry of entries) {
+      const localPath = join(dir, entry);
+      const stats = await stat(localPath);
+      
+      if (stats.isDirectory()) {
+        // Recursively upload subdirectories
+        await uploadRecursive(localPath, `${prefix}${entry}/`);
+      } else {
+        // Upload file
+        const fileContent = await readFile(localPath);
+        const s3Key = `${prefix}${entry}`;
+        
+        // Determine content type based on file extension
+        let contentType: string | undefined;
+        if (entry.endsWith(".json")) {
+          contentType = "application/json";
+        } else if (entry.endsWith(".txt") || entry.endsWith(".log")) {
+          contentType = "text/plain";
+        } else if (entry.endsWith(".md")) {
+          contentType = "text/markdown";
+        }
+        
+        const s3Url = await uploadFile(s3Key, fileContent, contentType);
+        uploadedUrls.push(s3Url);
+      }
+    }
+  }
+  
+  await uploadRecursive(localDir, s3Prefix);
+  return uploadedUrls;
+}
+

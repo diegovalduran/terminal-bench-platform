@@ -5,7 +5,7 @@ import extract from "extract-zip";
 import { QueuedJob } from "./job-queue";
 import { updateJobStatus, incrementJobProgress } from "./job-service";
 import { createAttempt, updateAttempt, createEpisode } from "./attempt-service";
-import { downloadFile } from "./s3-service";
+import { downloadFile, uploadDirectory } from "./s3-service";
 
 // Process registry for tracking and cancelling jobs
 interface RunningJob {
@@ -465,13 +465,22 @@ export async function processJob(job: QueuedJob) {
         const attemptDuration = Date.now() - attemptStartTime;
         const attemptStatus = testsPassed === testsTotal ? "success" : "failed";
         
-        // Update attempt with results and log path
+        // Upload trial directory to S3
+        console.log(`[Worker] Uploading trial directory to S3: ${trialDir}`);
+        const s3Prefix = `results/${job.jobId}/attempt-${i}/`;
+        const uploadedUrls = await uploadDirectory(trialDir, s3Prefix);
+        console.log(`[Worker] Uploaded ${uploadedUrls.length} files to S3`);
+        
+        // Store S3 URL in database (pointing to the trial directory root)
+        const s3TrialUrl = `s3://${process.env.S3_BUCKET}/${s3Prefix}`;
+        
+        // Update attempt with results and S3 log path
         await updateAttempt(attempt.id, {
           status: attemptStatus,
           testsPassed,
           testsTotal,
           rewardSummary: rewards,
-          logPath: latestRunDir, // Store path to Harbor output directory
+          logPath: s3TrialUrl, // Store S3 URL instead of local path
           finishedAt: new Date(),
         });
         
