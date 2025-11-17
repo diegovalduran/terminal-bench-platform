@@ -16,6 +16,7 @@ export const jobs = pgTable("jobs", {
   runsCompleted: integer("runs_completed").notNull().default(0),
   zipObjectUrl: text("zip_object_url"),
   ownerId: uuid("owner_id"),
+  errorMessage: text("error_message"),
   metadata: jsonb("metadata").$type<Record<string, unknown>>().default({}),
   createdAt: timestamp("created_at", { withTimezone: true })
     .defaultNow()
