@@ -56,3 +56,11 @@ export interface JobDetailResponse {
 export interface JobListResponse {
   jobs: JobListItem[];
 }
+
+export interface QueuedJob {
+  jobId: string;
+  taskName: string;
+  zipPath: string;
+  runsRequested: number;
+  userId: string;
+}

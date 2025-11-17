@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
-import { createJob } from "@/lib/job-service";
+import { createJob, updateJobStatus } from "@/lib/job-service";
 import { jobQueue } from "@/lib/job-queue";
 import { fetchJobList } from "@/lib/job-data-service";
 import { uploadFile } from "@/lib/s3-service";
@@ -88,12 +88,25 @@ export async function POST(request: NextRequest) {
     console.log(`[API] Created job ${job.id}`);
 
     // Enqueue for processing
-    jobQueue.enqueue({
-      jobId: job.id,
-      taskName: job.taskName,
-      zipPath: job.zipObjectUrl!, // Pass S3 URL to worker
-      runsRequested: job.runsRequested,
-    });
+    try {
+      jobQueue.enqueue({
+        jobId: job.id,
+        taskName: job.taskName,
+        zipPath: job.zipObjectUrl!, // Pass S3 URL to worker
+        runsRequested: job.runsRequested,
+        userId: session.user.id,
+      });
+    } catch (error) {
+      // If queue limit reached, update job status
+      if (error instanceof Error && error.message.includes("maximum queued jobs")) {
+        await updateJobStatus(job.id, "failed", error.message);
+        return NextResponse.json(
+          { error: error.message },
+          { status: 429 }
+        );
+      }
+      throw error;
+    }
 
     return NextResponse.json({
       jobId: job.id,

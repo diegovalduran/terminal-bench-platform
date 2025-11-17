@@ -2,7 +2,7 @@ import { spawn, ChildProcess } from "child_process";
 import { mkdir, readFile, readdir, stat, writeFile, unlink, rm } from "fs/promises";
 import { join } from "path";
 import extract from "extract-zip";
-import { QueuedJob } from "./job-queue";
+import { QueuedJob } from "@/types/runs";
 import { updateJobStatus, incrementJobProgress } from "./job-service";
 import { createAttempt, updateAttempt, createEpisode } from "./attempt-service";
 import { downloadFile, uploadDirectory } from "./s3-service";

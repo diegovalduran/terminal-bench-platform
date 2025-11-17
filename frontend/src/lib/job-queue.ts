@@ -1,34 +1,76 @@
-export interface QueuedJob {
-  jobId: string;
-  taskName: string;
-  zipPath: string;
-  runsRequested: number;
-}
+import { QueuedJob } from "@/types/runs";
 
 class JobQueue {
   private queue: QueuedJob[] = [];
   private running = new Set<string>();
+  private activeJobsByUser = new Map<string, string>(); // userId -> jobId
+  private queuedJobsByUser = new Map<string, QueuedJob[]>(); // userId -> jobs[]
   private maxConcurrent: number;
+  private maxQueuedPerUser: number;
 
-  constructor(maxConcurrent = 5) {
+  constructor(maxConcurrent = 5, maxQueuedPerUser = 5) {
     this.maxConcurrent = maxConcurrent;
+    this.maxQueuedPerUser = maxQueuedPerUser;
   }
 
   enqueue(job: QueuedJob) {
-    this.queue.push(job);
-    console.log(
-      `[Queue] Enqueued job ${job.jobId.slice(0, 8)}... (${job.taskName}) - Queue: ${this.queue.length}, Running: ${this.running.size}/${this.maxConcurrent}`
-    );
+    // Check if user already has an active job
+    if (this.activeJobsByUser.has(job.userId)) {
+      // User has active job, add to their queue
+      const userQueue = this.queuedJobsByUser.get(job.userId) || [];
+      
+      // Check queue limit per user
+      if (userQueue.length >= this.maxQueuedPerUser) {
+        throw new Error(
+          `User has reached maximum queued jobs limit (${this.maxQueuedPerUser})`
+        );
+      }
+      
+      userQueue.push(job);
+      this.queuedJobsByUser.set(job.userId, userQueue);
+      this.queue.push(job);
+      
+      console.log(
+        `[Queue] User ${job.userId.slice(0, 8)}... has active job, queued ${job.taskName} (${userQueue.length}/${this.maxQueuedPerUser} queued)`
+      );
+      return;
+    }
     
-    // Try to start processing immediately
-    this.processAvailable();
+    // User has no active job, can start immediately if slot available
+    if (this.running.size < this.maxConcurrent) {
+      // Start immediately
+      this.activeJobsByUser.set(job.userId, job.jobId);
+      this.processJob(job);
+      console.log(
+        `[Queue] Starting job ${job.jobId.slice(0, 8)}... for user ${job.userId.slice(0, 8)}... - Running: ${this.running.size + 1}/${this.maxConcurrent}`
+      );
+    } else {
+      // No slots available, add to queue
+      this.queue.push(job);
+      console.log(
+        `[Queue] Enqueued job ${job.jobId.slice(0, 8)}... (${job.taskName}) - Queue: ${this.queue.length}, Running: ${this.running.size}/${this.maxConcurrent}`
+      );
+    }
   }
 
   private async processAvailable() {
-    // Start as many jobs as we have slots for
+    // Start as many jobs as we have slots for, with fair scheduling
     while (this.queue.length > 0 && this.running.size < this.maxConcurrent) {
-      const job = this.queue.shift();
+      // Find next job from a user who doesn't have an active job
+      const jobIndex = this.queue.findIndex(
+        (job) => !this.activeJobsByUser.has(job.userId)
+      );
+
+      if (jobIndex === -1) {
+        // All users in queue already have active jobs
+        break;
+      }
+
+      const job = this.queue.splice(jobIndex, 1)[0];
       if (!job) break;
+
+      // Mark user as having active job
+      this.activeJobsByUser.set(job.userId, job.jobId);
 
       // Start job processing (don't await - let it run concurrently)
       this.processJob(job);
@@ -54,8 +96,33 @@ class JobQueue {
         error instanceof Error ? error.message : error
       );
     } finally {
-      // Remove from running set and try to process next
+      // Remove from running set
       this.running.delete(job.jobId);
+      
+      // Remove user's active job
+      this.activeJobsByUser.delete(job.userId);
+      
+      // Check if user has queued jobs and start the next one
+      const userQueue = this.queuedJobsByUser.get(job.userId);
+      if (userQueue && userQueue.length > 0) {
+        const nextJob = userQueue.shift()!;
+        this.queuedJobsByUser.set(job.userId, userQueue);
+        
+        // Remove from main queue if it's there
+        const queueIndex = this.queue.findIndex((j) => j.jobId === nextJob.jobId);
+        if (queueIndex !== -1) {
+          this.queue.splice(queueIndex, 1);
+        }
+        
+        // Start the next job for this user
+        this.activeJobsByUser.set(nextJob.userId, nextJob.jobId);
+        this.processJob(nextJob);
+        console.log(
+          `[Queue] Started next job for user ${nextJob.userId.slice(0, 8)}... (${userQueue.length} remaining in queue)`
+        );
+      }
+      
+      // Try to process other available jobs
       this.processAvailable();
     }
   }
@@ -77,11 +144,40 @@ class JobQueue {
   }
 
   getStatus() {
+    // Count queued jobs per user
+    const queuedByUser: Record<string, number> = {};
+    this.queuedJobsByUser.forEach((jobs, userId) => {
+      queuedByUser[userId] = jobs.length;
+    });
+
+    // Get active jobs per user
+    const activeByUser: Record<string, string> = {};
+    this.activeJobsByUser.forEach((jobId, userId) => {
+      activeByUser[userId] = jobId;
+    });
+
     return {
       queued: this.queue.length,
       running: this.running.size,
       maxConcurrent: this.maxConcurrent,
       available: this.maxConcurrent - this.running.size,
+      activeUsers: this.activeJobsByUser.size,
+      queuedByUser,
+      activeByUser,
+    };
+  }
+
+  getUserQueueStatus(userId: string) {
+    const hasActiveJob = this.activeJobsByUser.has(userId);
+    const queuedJobs = this.queuedJobsByUser.get(userId) || [];
+    const activeJobId = this.activeJobsByUser.get(userId);
+
+    return {
+      hasActiveJob,
+      activeJobId: activeJobId || null,
+      queuedCount: queuedJobs.length,
+      maxQueued: this.maxQueuedPerUser,
+      canQueueMore: queuedJobs.length < this.maxQueuedPerUser,
     };
   }
 }
