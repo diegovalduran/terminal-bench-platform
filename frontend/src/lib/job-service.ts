@@ -1,6 +1,6 @@
 import { db } from "@/db/client";
 import { jobs } from "@/db/schema";
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 
 export interface CreateJobParams {
   taskName: string;
@@ -54,7 +54,7 @@ export async function incrementJobProgress(jobId: string) {
   await db
     .update(jobs)
     .set({
-      runsCompleted: db.raw("runs_completed + 1"),
+      runsCompleted: sql`${jobs.runsCompleted} + 1`,
       updatedAt: new Date(),
     })
     .where(eq(jobs.id, jobId));
