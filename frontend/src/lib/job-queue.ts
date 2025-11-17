@@ -172,12 +172,18 @@ class JobQueue {
     const queuedJobs = this.queuedJobsByUser.get(userId) || [];
     const activeJobId = this.activeJobsByUser.get(userId);
 
+    // Count jobs in main queue that belong to this user (waiting for system slots)
+    const jobsInMainQueue = this.queue.filter((job) => job.userId === userId).length;
+
+    // Total queued jobs = user's personal queue + jobs in main queue
+    const totalQueued = queuedJobs.length + jobsInMainQueue;
+
     return {
       hasActiveJob,
       activeJobId: activeJobId || null,
-      queuedCount: queuedJobs.length,
+      queuedCount: totalQueued,
       maxQueued: this.maxQueuedPerUser,
-      canQueueMore: queuedJobs.length < this.maxQueuedPerUser,
+      canQueueMore: totalQueued < this.maxQueuedPerUser,
     };
   }
 }

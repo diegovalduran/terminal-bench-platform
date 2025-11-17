@@ -41,6 +41,21 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    // Check queue limit BEFORE creating job or uploading to S3
+    const userQueueStatus = jobQueue.getUserQueueStatus(session.user.id);
+    
+    // Check if user can queue more jobs
+    if (!userQueueStatus.canQueueMore) {
+      const errorMessage = userQueueStatus.hasActiveJob
+        ? `You already have an active job and ${userQueueStatus.queuedCount} queued jobs. Maximum is ${userQueueStatus.maxQueued} queued jobs. Please wait for your current jobs to complete.`
+        : `You have ${userQueueStatus.queuedCount} queued jobs. Maximum is ${userQueueStatus.maxQueued} queued jobs. Please wait for your jobs to start processing.`;
+      
+      return NextResponse.json(
+        { error: errorMessage },
+        { status: 429 }
+      );
+    }
+
     const formData = await request.formData();
     const file = formData.get("taskZip") as File | null;
     const runsRequested = parseInt(formData.get("runsRequested") as string) || 10;
@@ -87,7 +102,7 @@ export async function POST(request: NextRequest) {
 
     console.log(`[API] Created job ${job.id}`);
 
-    // Enqueue for processing
+    // Enqueue for processing (should succeed since we checked limit above)
     try {
       jobQueue.enqueue({
         jobId: job.id,
@@ -97,15 +112,13 @@ export async function POST(request: NextRequest) {
         userId: session.user.id,
       });
     } catch (error) {
-      // If queue limit reached, update job status
-      if (error instanceof Error && error.message.includes("maximum queued jobs")) {
-        await updateJobStatus(job.id, "failed", error.message);
-        return NextResponse.json(
-          { error: error.message },
-          { status: 429 }
-        );
-      }
-      throw error;
+      // This should rarely happen, but handle it gracefully
+      console.error(`[API] Failed to enqueue job ${job.id}:`, error);
+      await updateJobStatus(job.id, "failed", error instanceof Error ? error.message : "Failed to enqueue job");
+      return NextResponse.json(
+        { error: error instanceof Error ? error.message : "Failed to enqueue job" },
+        { status: 500 }
+      );
     }
 
     return NextResponse.json({
