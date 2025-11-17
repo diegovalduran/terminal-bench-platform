@@ -1,9 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
-import { writeFile, mkdir } from "fs/promises";
-import { join } from "path";
 import { createJob } from "@/lib/job-service";
 import { jobQueue } from "@/lib/job-queue";
 import { fetchJobList } from "@/lib/job-data-service";
+import { uploadFile } from "@/lib/s3-service";
 
 export async function GET() {
   try {
@@ -39,29 +38,27 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Create uploads directory if it doesn't exist
-    const uploadsDir = join(process.cwd(), "uploads");
-    await mkdir(uploadsDir, { recursive: true });
-
-    // Save file to disk
-    const timestamp = Date.now();
-    const safeFileName = file.name.replace(/[^a-zA-Z0-9.-]/g, "_");
-    const fileName = `${timestamp}-${safeFileName}`;
-    const filePath = join(uploadsDir, fileName);
-
-    const bytes = await file.arrayBuffer();
-    const buffer = Buffer.from(bytes);
-    await writeFile(filePath, buffer);
-
-    console.log(`[API] Saved upload to ${filePath}`);
-
     // Extract task name from filename (remove .zip extension)
     const taskName = file.name.replace(/\.zip$/, "");
 
-    // Create job in database
+    // Generate S3 key with timestamp for uniqueness
+    const timestamp = Date.now();
+    const safeFileName = file.name.replace(/[^a-zA-Z0-9.-]/g, "_");
+    const s3Key = `tasks/${timestamp}-${safeFileName}`;
+
+    console.log(`[API] Uploading ${file.name} to S3: ${s3Key}`);
+
+    // Upload file to S3
+    const bytes = await file.arrayBuffer();
+    const buffer = Buffer.from(bytes);
+    const s3Url = await uploadFile(s3Key, buffer, "application/zip");
+
+    console.log(`[API] Uploaded to S3: ${s3Url}`);
+
+    // Create job in database with S3 URL
     const job = await createJob({
       taskName,
-      zipPath: filePath,
+      zipPath: s3Url, // Store S3 URL (e.g., s3://bucket/tasks/123-file.zip)
       runsRequested,
     });
 
@@ -71,7 +68,7 @@ export async function POST(request: NextRequest) {
     jobQueue.enqueue({
       jobId: job.id,
       taskName: job.taskName,
-      zipPath: job.zipObjectUrl!,
+      zipPath: job.zipObjectUrl!, // Pass S3 URL to worker
       runsRequested: job.runsRequested,
     });
 

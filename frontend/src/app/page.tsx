@@ -34,10 +34,10 @@ export default function Home() {
                 <Loader2 className="h-5 w-5 animate-spin text-zinc-400" />
               </div>
             ) : (
-              <JobList jobs={jobs} />
+          <JobList jobs={jobs} />
             )}
           </div>
-        </div>
+          </div>
       </div>
     </div>
   );

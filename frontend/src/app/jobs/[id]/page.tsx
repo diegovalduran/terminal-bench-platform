@@ -132,7 +132,7 @@ export default function JobDetailPage({ params }: JobDetailPageProps) {
             <h2 className="text-lg font-semibold text-zinc-900">
               Attempts ({job.attempts.length}/{job.runsRequested})
             </h2>
-            {job.status === "processing" && (
+            {job.status === "running" && (
               <div className="flex items-center gap-1.5 text-sm text-blue-600">
                 <Loader2 className="h-3.5 w-3.5 animate-spin" />
                 <span>Updating live...</span>

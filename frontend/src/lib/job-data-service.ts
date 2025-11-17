@@ -23,6 +23,7 @@ export async function fetchJobList(): Promise<JobListResponse> {
   return {
     jobs: dbJobs.map((job) => ({
       ...job,
+      status: job.status as JobListResponse["jobs"][number]["status"],
       createdAt: job.createdAt.toISOString(),
     })),
   };

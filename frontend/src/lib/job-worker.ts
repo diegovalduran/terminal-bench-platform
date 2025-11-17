@@ -1,10 +1,11 @@
 import { spawn, ChildProcess } from "child_process";
-import { mkdir, readFile, readdir, stat } from "fs/promises";
+import { mkdir, readFile, readdir, stat, writeFile, unlink } from "fs/promises";
 import { join } from "path";
 import extract from "extract-zip";
 import { QueuedJob } from "./job-queue";
 import { updateJobStatus, incrementJobProgress } from "./job-service";
 import { createAttempt, updateAttempt, createEpisode } from "./attempt-service";
+import { downloadFile } from "./s3-service";
 
 // Process registry for tracking and cancelling jobs
 interface RunningJob {
@@ -14,6 +15,27 @@ interface RunningJob {
 }
 
 const runningJobs = new Map<string, RunningJob>();
+
+/**
+ * Extract S3 key from S3 URL
+ * @param s3Url - S3 URL in format "s3://bucket/key/path.zip"
+ * @returns The key portion (e.g., "key/path.zip")
+ */
+function extractS3Key(s3Url: string): string {
+  if (!s3Url.startsWith("s3://")) {
+    throw new Error(`Invalid S3 URL format: ${s3Url}`);
+  }
+  
+  // Remove "s3://" prefix and bucket name
+  const withoutProtocol = s3Url.slice(5); // Remove "s3://"
+  const firstSlashIndex = withoutProtocol.indexOf("/");
+  
+  if (firstSlashIndex === -1) {
+    throw new Error(`Invalid S3 URL format: ${s3Url}`);
+  }
+  
+  return withoutProtocol.slice(firstSlashIndex + 1);
+}
 
 export function cancelJob(jobId: string): boolean {
   const job = runningJobs.get(jobId);
@@ -332,8 +354,23 @@ export async function processJob(job: QueuedJob) {
     await mkdir(taskDir, { recursive: true });
     await mkdir(outputDir, { recursive: true });
     
-    console.log(`[Worker] Extracting ${job.zipPath} to ${taskDir}`);
-    await extract(job.zipPath, { dir: taskDir });
+    // Download zip from S3 to temp location
+    console.log(`[Worker] Downloading zip from S3: ${job.zipPath}`);
+    const s3Key = extractS3Key(job.zipPath);
+    const zipBuffer = await downloadFile(s3Key);
+    
+    // Save to temp file for extraction
+    const tempZipPath = join(workDir, "task.zip");
+    await writeFile(tempZipPath, zipBuffer);
+    console.log(`[Worker] Downloaded ${zipBuffer.length} bytes to ${tempZipPath}`);
+    
+    // Extract the zip file
+    console.log(`[Worker] Extracting ${tempZipPath} to ${taskDir}`);
+    await extract(tempZipPath, { dir: taskDir });
+    
+    // Clean up temp zip file after extraction
+    await unlink(tempZipPath);
+    console.log(`[Worker] Cleaned up temp zip file`);
     
     // Find the actual task directory
     const actualTaskDir = await findTaskDirectory(taskDir);
