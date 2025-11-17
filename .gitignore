@@ -23,4 +23,5 @@ terminal-bench-2/.cache/
 frontend/node_modules/
 frontend/.next/
 frontend/.env*.local
+frontend/uploads/
 
