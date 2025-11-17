@@ -1,0 +1,21 @@
+# Python
+__pycache__/
+*.pyc
+
+# Virtualenvs
+.venv/
+.env/
+
+# macOS
+.DS_Store
+
+# Harbor runs output
+runs/
+
+# Task datasets cache
+terminal-bench-2/.cache/
+
+# Editor settings
+.vscode/
+.idea/
+
