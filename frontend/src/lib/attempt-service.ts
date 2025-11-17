@@ -54,6 +54,7 @@ export async function updateAttempt(
     testsPassed?: number;
     testsTotal?: number;
     rewardSummary?: Record<string, number>;
+    logPath?: string;
     finishedAt?: Date;
   }
 ) {

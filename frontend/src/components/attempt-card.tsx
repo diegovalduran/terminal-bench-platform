@@ -5,6 +5,7 @@ import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { formatDistance } from "date-fns";
+import { CheckCircle2, XCircle } from "lucide-react";
 
 const attemptStatusColor: Record<Attempt["status"], string> = {
   queued: "bg-zinc-100 text-zinc-700",
@@ -46,71 +47,130 @@ export function AttemptCard({ attempt }: AttemptCardProps) {
         </Badge>
       </CardHeader>
       <CardContent className="space-y-4">
-        <div className="text-sm text-zinc-600">
-          <p className="font-medium text-zinc-800">Reward summary</p>
-          <div className="mt-2 flex flex-wrap gap-2">
-            {attempt.rewardSummary ? (
-              Object.entries(attempt.rewardSummary).map(([key, value]) => (
-                <span
-                  key={key}
-                  className="rounded-full bg-zinc-100 px-3 py-1 text-xs font-medium capitalize text-zinc-600"
-                >
-                  {key.replace(/_/g, " ")}: {value}
-                </span>
-              ))
-            ) : (
-              <span className="text-zinc-400">No rewards recorded</span>
-            )}
-          </div>
-        </div>
-        <Separator />
+        {/* Test Results Section - Collapsible */}
         <Accordion type="single" collapsible>
-          {attempt.episodes.map((episode) => (
-            <AccordionItem key={episode.id} value={episode.id}>
-              <AccordionTrigger>
-                <div className="text-left">
-                  <p className="text-sm font-semibold text-zinc-900">
-                    Episode {episode.index + 1}
-                  </p>
-                  <p className="text-xs text-zinc-500">
-                    {episode.stateAnalysis.slice(0, 96)}…
-                  </p>
-                </div>
-              </AccordionTrigger>
-              <AccordionContent className="space-y-3">
-                <div>
-                  <p className="text-xs uppercase tracking-wide text-zinc-500">
-                    State Analysis
-                  </p>
-                  <p className="text-sm text-zinc-700">{episode.stateAnalysis}</p>
-                </div>
-                <div>
-                  <p className="text-xs uppercase tracking-wide text-zinc-500">
-                    Explanation
-                  </p>
-                  <p className="text-sm text-zinc-700">{episode.explanation}</p>
-                </div>
-                <div>
-                  <p className="text-xs uppercase tracking-wide text-zinc-500">
-                    Commands
-                  </p>
-                  <ScrollArea className="mt-2 max-h-48 rounded-lg border border-zinc-100 bg-zinc-50 p-3">
-                    <div className="space-y-3 text-sm font-mono text-zinc-800">
-                      {episode.commands.map((command, idx) => (
-                        <div key={`${episode.id}-cmd-${idx}`} className="space-y-1">
-                          <p className="text-zinc-500">$ {command.command}</p>
-                          <pre className="whitespace-pre-wrap text-zinc-900">
-                            {command.output}
-                          </pre>
+          <AccordionItem value="test-results" className="border-none">
+            <AccordionTrigger className="hover:no-underline">
+              <div className="flex w-full items-center justify-between pr-4">
+                <p className="text-sm font-semibold text-zinc-800">
+                  Attempt Test Case Pass Rate
+                  <span className="ml-2 text-xs font-normal text-zinc-500">
+                    (from parser results)
+                  </span>
+                </p>
+                <Badge
+                  variant="outline"
+                  className="bg-zinc-50 text-sm font-semibold text-zinc-700"
+                >
+                  {passRate} passed
+                </Badge>
+              </div>
+            </AccordionTrigger>
+            <AccordionContent className="pt-3">
+              <div className="space-y-2">
+                {attempt.rewardSummary && Object.keys(attempt.rewardSummary).length > 0 ? (
+                  Object.entries(attempt.rewardSummary).map(([testName, passed]) => (
+                    <div
+                      key={testName}
+                      className="flex items-center justify-between gap-4 rounded-lg border border-zinc-200 bg-white px-4 py-3 transition-colors hover:bg-zinc-50"
+                    >
+                      <span className="flex-1 font-mono text-sm font-medium text-zinc-800">
+                        {testName}
+                      </span>
+                      {passed === 1 ? (
+                        <div className="flex items-center gap-2 text-emerald-600">
+                          <CheckCircle2 className="h-5 w-5" />
+                          <span className="text-sm font-semibold">Passed</span>
                         </div>
-                      ))}
+                      ) : (
+                        <div className="flex items-center gap-2 text-rose-600">
+                          <XCircle className="h-5 w-5" />
+                          <span className="text-sm font-semibold">Failed</span>
+                        </div>
+                      )}
                     </div>
-                  </ScrollArea>
-                </div>
-              </AccordionContent>
-            </AccordionItem>
-          ))}
+                  ))
+                ) : (
+                  <p className="text-sm text-zinc-400">No test results available</p>
+                )}
+              </div>
+            </AccordionContent>
+          </AccordionItem>
         </Accordion>
+
+        <Separator />
+
+        {/* Episodes Section */}
+        <div>
+          <div className="mb-3 flex items-center gap-2">
+            <p className="text-sm font-semibold text-zinc-800">Episodes</p>
+            <Badge
+              variant="secondary"
+              className="bg-zinc-100 text-zinc-700 hover:bg-zinc-100"
+            >
+              {attempt.episodes.length}
+            </Badge>
+          </div>
+          <Accordion type="single" collapsible>
+            {attempt.episodes.map((episode) => (
+              <AccordionItem key={episode.id} value={episode.id}>
+                <AccordionTrigger>
+                  <div className="text-left">
+                    <p className="text-sm font-semibold text-zinc-900">
+                      Episode {episode.index}
+                    </p>
+                    <p className="text-xs text-zinc-500">
+                      {episode.stateAnalysis.slice(0, 80)}…
+                    </p>
+                  </div>
+                </AccordionTrigger>
+                <AccordionContent className="space-y-4 pt-2">
+                  {/* State Analysis Container */}
+                  <div className="rounded-lg border border-blue-200 bg-blue-50 p-4">
+                    <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-blue-900">
+                      State Analysis:
+                    </p>
+                    <p className="text-sm leading-relaxed text-blue-950">
+                      {episode.stateAnalysis}
+                    </p>
+                  </div>
+
+                  {/* Explanation Container */}
+                  <div className="rounded-lg border border-purple-200 bg-purple-50 p-4">
+                    <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-purple-900">
+                      Explanation:
+                    </p>
+                    <p className="text-sm leading-relaxed text-purple-950">
+                      {episode.explanation}
+                    </p>
+                  </div>
+
+                  {/* Commands Section */}
+                  <div>
+                    <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-zinc-700">
+                      Commands:
+                    </p>
+                    <ScrollArea className="h-[576px] w-full rounded-lg border border-zinc-300 bg-zinc-900">
+                      <div className="space-y-4 p-4 font-mono text-sm">
+                        {episode.commands.map((command, idx) => (
+                          <div key={`${episode.id}-cmd-${idx}`} className="space-y-2">
+                            <p className="text-emerald-400">$ {command.command}</p>
+                            <pre className="whitespace-pre-wrap break-words text-zinc-100">
+                              {command.output}
+                            </pre>
+                            {idx < episode.commands.length - 1 && (
+                              <Separator className="bg-zinc-700" />
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    </ScrollArea>
+                  </div>
+                </AccordionContent>
+              </AccordionItem>
+            ))}
+          </Accordion>
+        </div>
       </CardContent>
     </Card>
   );

@@ -1,19 +1,21 @@
 "use client";
 
 import { use, useState } from "react";
+import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { useJob } from "@/hooks/use-job";
 import { JobOverview } from "@/components/job-overview";
 import { AttemptCard } from "@/components/attempt-card";
 import { Separator } from "@/components/ui/separator";
 import { Button } from "@/components/ui/button";
-import { Loader2, XCircle } from "lucide-react";
+import { ArrowLeft, Loader2, XCircle } from "lucide-react";
 
 interface JobDetailPageProps {
   params: Promise<{ id: string }>;
 }
 
 export default function JobDetailPage({ params }: JobDetailPageProps) {
+  const router = useRouter();
   const { id } = use(params);
   const { job, isLoading, isError, mutate } = useJob(id);
   const [cancelling, setCancelling] = useState(false);
@@ -81,6 +83,15 @@ export default function JobDetailPage({ params }: JobDetailPageProps) {
     <div className="min-h-screen bg-zinc-50 py-10">
       <div className="mx-auto flex max-w-5xl flex-col gap-8 px-4 md:px-6">
         <header className="space-y-3">
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => router.push("/")}
+            className="mb-2 -ml-2 w-fit text-zinc-600 hover:text-zinc-900"
+          >
+            <ArrowLeft className="mr-2 h-4 w-4" />
+            Back to Home
+          </Button>
           <p className="text-sm font-medium uppercase tracking-[0.3em] text-zinc-500">
             Job Detail
           </p>

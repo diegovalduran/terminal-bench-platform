@@ -1,5 +1,5 @@
 import { spawn, ChildProcess } from "child_process";
-import { mkdir, readFile, rm, readdir, stat } from "fs/promises";
+import { mkdir, readFile, readdir, stat } from "fs/promises";
 import { join } from "path";
 import extract from "extract-zip";
 import { QueuedJob } from "./job-queue";
@@ -146,9 +146,30 @@ async function parseTrajectory(trialDir: string): Promise<{
   }>;
   totalDurationMs: number;
 }> {
+  // Try oracle.txt first (for Oracle agent), then trajectory.json (for real LLM agents)
+  const oraclePath = join(trialDir, "agent", "oracle.txt");
   const trajectoryPath = join(trialDir, "agent", "trajectory.json");
   
   try {
+    // Check for Oracle agent output first
+    const oracleContent = await readFile(oraclePath, "utf-8").catch(() => null);
+    if (oracleContent) {
+      console.log(`[Worker] Found oracle.txt, parsing Oracle agent output`);
+      return {
+        episodes: [{
+          stateAnalysis: "Oracle agent execution",
+          explanation: "Oracle agent knows the solution and executes it directly",
+          commands: [{
+            command: "oracle",
+            output: oracleContent, // Full oracle.txt content
+            exitCode: 0,
+          }],
+        }],
+        totalDurationMs: 0,
+      };
+    }
+    
+    // Try trajectory.json for real LLM agents
     const trajectoryContent = await readFile(trajectoryPath, "utf-8");
     const trajectory: Trajectory = JSON.parse(trajectoryContent);
     
@@ -407,12 +428,13 @@ export async function processJob(job: QueuedJob) {
         const attemptDuration = Date.now() - attemptStartTime;
         const attemptStatus = testsPassed === testsTotal ? "success" : "failed";
         
-        // Update attempt with results
+        // Update attempt with results and log path
         await updateAttempt(attempt.id, {
           status: attemptStatus,
           testsPassed,
           testsTotal,
           rewardSummary: rewards,
+          logPath: latestRunDir, // Store path to Harbor output directory
           finishedAt: new Date(),
         });
         
@@ -469,7 +491,13 @@ export async function processJob(job: QueuedJob) {
     runningJobs.delete(job.jobId);
     console.log(`[Worker] Unregistered job ${job.jobId}`);
     
-    // Cleanup work directory and uploaded zip
+    // TODO: Cleanup disabled for testing - files kept for inspection
+    // When S3/R2 is implemented, re-enable cleanup after uploading to object storage
+    console.log(`[Worker] ⚠️  Files preserved for testing at: ${workDir}`);
+    console.log(`[Worker] ⚠️  Upload preserved at: ${job.zipPath}`);
+    
+    /*
+    // Cleanup work directory and uploaded zip (DISABLED FOR TESTING)
     try {
       // Remove work directory
       await rm(workDir, { recursive: true, force: true });
@@ -482,5 +510,6 @@ export async function processJob(job: QueuedJob) {
       console.error(`[Worker] Failed to cleanup files:`, cleanupError);
       // Don't fail the job because of cleanup errors
     }
+    */
   }
 }
