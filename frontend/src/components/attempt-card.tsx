@@ -3,7 +3,6 @@ import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
-import { ScrollArea } from "@/components/ui/scroll-area";
 import { formatDistance } from "date-fns";
 import { CheckCircle2, XCircle } from "lucide-react";
 
@@ -150,11 +149,11 @@ export function AttemptCard({ attempt }: AttemptCardProps) {
                     <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-zinc-700">
                       Commands:
                     </p>
-                    <ScrollArea className="h-[576px] w-full rounded-lg border border-zinc-300 bg-zinc-900">
+                    <div className="h-[576px] w-full overflow-y-auto rounded-lg border border-zinc-300 bg-zinc-900">
                       <div className="space-y-4 p-4 font-mono text-sm">
                         {episode.commands.map((command, idx) => (
                           <div key={`${episode.id}-cmd-${idx}`} className="space-y-2">
-                            <p className="text-emerald-400">$ {command.command}</p>
+                            <p className="whitespace-pre-wrap break-words text-emerald-400">$ {command.command}</p>
                             <pre className="whitespace-pre-wrap break-words text-zinc-100">
                               {command.output}
                             </pre>
@@ -164,7 +163,7 @@ export function AttemptCard({ attempt }: AttemptCardProps) {
                           </div>
                         ))}
                       </div>
-                    </ScrollArea>
+                    </div>
                   </div>
                 </AccordionContent>
               </AccordionItem>
