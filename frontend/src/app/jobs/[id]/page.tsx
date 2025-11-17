@@ -143,7 +143,7 @@ export default function JobDetailPage({ params }: JobDetailPageProps) {
           <div className="grid gap-6">
             {job.attempts.length > 0 ? (
               job.attempts.map((attempt) => (
-                <AttemptCard key={attempt.id} attempt={attempt} />
+                <AttemptCard key={attempt.id} attempt={attempt} jobId={id} />
               ))
             ) : (
               <p className="text-center text-sm text-zinc-500">

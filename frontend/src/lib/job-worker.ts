@@ -1,5 +1,5 @@
 import { spawn, ChildProcess } from "child_process";
-import { mkdir, readFile, readdir, stat, writeFile, unlink } from "fs/promises";
+import { mkdir, readFile, readdir, stat, writeFile, unlink, rm } from "fs/promises";
 import { join } from "path";
 import extract from "extract-zip";
 import { QueuedJob } from "./job-queue";
@@ -537,25 +537,13 @@ export async function processJob(job: QueuedJob) {
     runningJobs.delete(job.jobId);
     console.log(`[Worker] Unregistered job ${job.jobId}`);
     
-    // TODO: Cleanup disabled for testing - files kept for inspection
-    // When S3/R2 is implemented, re-enable cleanup after uploading to object storage
-    console.log(`[Worker] ⚠️  Files preserved for testing at: ${workDir}`);
-    console.log(`[Worker] ⚠️  Upload preserved at: ${job.zipPath}`);
-    
-    /*
-    // Cleanup work directory and uploaded zip (DISABLED FOR TESTING)
+    // Cleanup local work directory (artifacts are already in S3)
     try {
-      // Remove work directory
       await rm(workDir, { recursive: true, force: true });
-      console.log(`[Worker] Cleaned up work directory: ${workDir}`);
-      
-      // Remove uploaded zip file
-      await rm(job.zipPath, { force: true });
-      console.log(`[Worker] Cleaned up uploaded file: ${job.zipPath}`);
+      console.log(`[Worker] Cleaned up local work directory: ${workDir}`);
     } catch (cleanupError) {
-      console.error(`[Worker] Failed to cleanup files:`, cleanupError);
+      console.error(`[Worker] Failed to cleanup work directory:`, cleanupError);
       // Don't fail the job because of cleanup errors
     }
-    */
   }
 }

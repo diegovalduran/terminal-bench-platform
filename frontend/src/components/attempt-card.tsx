@@ -1,10 +1,21 @@
+"use client";
+
+import { useState } from "react";
 import { Attempt } from "@/types/runs";
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
+import { Button } from "@/components/ui/button";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { formatDistance } from "date-fns";
-import { CheckCircle2, XCircle } from "lucide-react";
+import { CheckCircle2, XCircle, Download, Loader2, ChevronDown } from "lucide-react";
+import { toast } from "sonner";
 
 const attemptStatusColor: Record<Attempt["status"], string> = {
   queued: "bg-zinc-100 text-zinc-700",
@@ -15,9 +26,12 @@ const attemptStatusColor: Record<Attempt["status"], string> = {
 
 interface AttemptCardProps {
   attempt: Attempt;
+  jobId: string;
 }
 
-export function AttemptCard({ attempt }: AttemptCardProps) {
+export function AttemptCard({ attempt, jobId }: AttemptCardProps) {
+  const [downloading, setDownloading] = useState<string | null>(null);
+
   const duration =
     attempt.startedAt && attempt.finishedAt
       ? formatDistance(
@@ -29,6 +43,50 @@ export function AttemptCard({ attempt }: AttemptCardProps) {
 
   const passRate = `${attempt.testsPassed}/${attempt.testsTotal}`;
 
+  const handleDownload = async (filePath?: string, label?: string) => {
+    if (!attempt.logPath) {
+      toast.error("No logs available", {
+        description: "This attempt does not have log files available.",
+      });
+      return;
+    }
+
+    const downloadKey = filePath || label || "logs";
+    setDownloading(downloadKey);
+
+    try {
+      const params = new URLSearchParams();
+      if (filePath) {
+        params.set("file", filePath);
+      }
+
+      const response = await fetch(
+        `/api/jobs/${jobId}/attempts/${attempt.id}/download?${params.toString()}`
+      );
+
+      if (!response.ok) {
+        const data = await response.json();
+        throw new Error(data.error || "Failed to generate download URL");
+      }
+
+      const { url } = await response.json();
+
+      // Open the signed URL in a new tab to trigger download
+      window.open(url, "_blank");
+
+      toast.success("Download started", {
+        description: label ? `Downloading ${label}...` : "Opening download link...",
+      });
+    } catch (error) {
+      console.error("Download error:", error);
+      toast.error("Download failed", {
+        description: error instanceof Error ? error.message : "Please try again",
+      });
+    } finally {
+      setDownloading(null);
+    }
+  };
+
   return (
     <Card className="border-zinc-200 shadow-sm">
       <CardHeader className="flex flex-col gap-2 pb-4 sm:flex-row sm:items-center sm:justify-between">
@@ -39,11 +97,84 @@ export function AttemptCard({ attempt }: AttemptCardProps) {
           <CardTitle className="text-xl">Tests {passRate} passed</CardTitle>
           <p className="text-sm text-zinc-500">Duration: {duration}</p>
         </div>
-        <Badge
-          className={`capitalize ${attemptStatusColor[attempt.status]} hover:${attemptStatusColor[attempt.status]}`}
-        >
-          {attempt.status}
-        </Badge>
+        <div className="flex items-center gap-2">
+          {attempt.logPath && attempt.status !== "running" && (
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  disabled={!!downloading}
+                  className="h-8 text-xs"
+                >
+                  {downloading ? (
+                    <>
+                      <Loader2 className="mr-1.5 h-3 w-3 animate-spin" />
+                      Loading...
+                    </>
+                  ) : (
+                    <>
+                      <Download className="mr-1.5 h-3 w-3" />
+                      Download
+                      <ChevronDown className="ml-1 h-3 w-3" />
+                    </>
+                  )}
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="w-48">
+                <DropdownMenuItem
+                  onClick={() => handleDownload("config.json", "Config")}
+                  disabled={!!downloading}
+                >
+                  <Download className="mr-2 h-4 w-4" />
+                  Config (config.json)
+                </DropdownMenuItem>
+                <DropdownMenuItem
+                  onClick={() => handleDownload("result.json", "Result")}
+                  disabled={!!downloading}
+                >
+                  <Download className="mr-2 h-4 w-4" />
+                  Result (result.json)
+                </DropdownMenuItem>
+                <DropdownMenuItem
+                  onClick={() => handleDownload("trial.log", "Trial Log")}
+                  disabled={!!downloading}
+                >
+                  <Download className="mr-2 h-4 w-4" />
+                  Trial Log (trial.log)
+                </DropdownMenuItem>
+                <Separator className="my-1" />
+                <DropdownMenuItem
+                  onClick={() => handleDownload("agent/trajectory.json", "Trajectory")}
+                  disabled={!!downloading}
+                >
+                  <Download className="mr-2 h-4 w-4" />
+                  Trajectory (agent/trajectory.json)
+                </DropdownMenuItem>
+                <DropdownMenuItem
+                  onClick={() => handleDownload("agent/oracle.txt", "Oracle Output")}
+                  disabled={!!downloading}
+                >
+                  <Download className="mr-2 h-4 w-4" />
+                  Oracle Output (agent/oracle.txt)
+                </DropdownMenuItem>
+                <Separator className="my-1" />
+                <DropdownMenuItem
+                  onClick={() => handleDownload("verifier/reward.json", "Reward")}
+                  disabled={!!downloading}
+                >
+                  <Download className="mr-2 h-4 w-4" />
+                  Reward (verifier/reward.json)
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          )}
+          <Badge
+            className={`capitalize ${attemptStatusColor[attempt.status]} hover:${attemptStatusColor[attempt.status]}`}
+          >
+            {attempt.status}
+          </Badge>
+        </div>
       </CardHeader>
       <CardContent className="space-y-4">
         {/* Test Results Section - Collapsible */}

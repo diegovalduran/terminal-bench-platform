@@ -8,15 +8,16 @@ A platform for running and analyzing Terminal-Bench tasks using the Harbor harne
 
 Run 1 terminal bench task locally using bash commands via Harbor and analyze the output of the run, where it saves, and the running process.
 
-## Goal 2: Scoring and Observability 🚧
+## Goal 2: Scoring and Observability ✅
 
-**Status**: MVP Complete - Ready for Testing
+**Status**: Complete - Production Ready
 
 Build a hosted application where users can:
 - Upload zipped Terminal-Bench tasks
 - Run Terminus 2 agent multiple times (configurable, default 10)
 - View live updates of agent execution
 - Inspect detailed logs, episodes, and test results
+- Download artifacts from S3 storage
 
 ### Progress
 
@@ -27,7 +28,9 @@ Build a hosted application where users can:
 ✅ **Live UI Updates**: SWR polling for real-time job/attempt status  
 ✅ **Error Handling**: Toast notifications and loading states  
 ✅ **Trajectory Parsing**: Extract detailed episodes from agent logs  
-⏳ **Integration Testing**: Need database + OpenAI API key to test end-to-end
+✅ **S3 Object Storage**: Task uploads and Harbor outputs stored in S3  
+✅ **Signed URL Downloads**: Secure time-limited access to artifacts  
+✅ **End-to-End Testing**: Verified with Oracle agent (Terminus 2 ready when API key available)
 
 ## Goal 3: Run Persistence and Comparison 🚧
 
@@ -80,23 +83,40 @@ Enable multiple users to upload and run multiple tasks concurrently without inte
    npm install
    ```
 
-2. **Setup database**:
+2. **Setup environment variables**:
    ```bash
-   # Create a PostgreSQL database (local or hosted like Supabase/Neon)
-   # Copy env.template to .env.local and update DATABASE_URL
+   # Copy env.template to .env.local
    cp env.template .env.local
    
+   # Update .env.local with your configuration:
+   # - DATABASE_URL: PostgreSQL connection string (e.g., Neon, Supabase)
+   # - S3_BUCKET: Your S3 bucket name
+   # - S3_REGION: AWS region (e.g., us-east-2)
+   # - S3_ACCESS_KEY_ID: AWS access key
+   # - S3_SECRET_ACCESS_KEY: AWS secret key
+   # - OPENAI_API_KEY: (Optional) For Terminus 2 agent
+   ```
+
+3. **Setup database**:
+   ```bash
    # Generate and run migrations
    npm run db:generate
    npm run db:migrate
    ```
 
-3. **Run development server**:
+4. **Setup S3 bucket**:
+   ```bash
+   # Create an S3 bucket in AWS Console
+   # Create an IAM user with S3FullAccess permissions
+   # Add credentials to .env.local (see step 2)
+   ```
+
+5. **Run development server**:
    ```bash
    npm run dev
    ```
 
-4. **Access the app**:
+6. **Access the app**:
    Open [http://localhost:3000](http://localhost:3000)
 
 ## Project Structure
@@ -146,14 +166,31 @@ harbor run \
     --jobs-dir ./runs
 ```
 
-## Output Structure
+## Storage Structure
 
-Results are saved in `runs/<job-id>/`:
-- `result.json`: Job summary and statistics
-- `trials/<trial-id>/`: Individual trial results
-  - `result.json`: Trial result with agent and verifier info
-  - `agent/`: Agent logs and trajectories
-  - `verifier/`: Test results and rewards
+### Local Storage (Temporary)
+Local work directories are created temporarily during job processing and cleaned up after artifacts are uploaded to S3:
+- `frontend/work/<job-id>/`: Temporary extraction and Harbor execution directory (auto-cleaned)
+
+### S3 Storage (Permanent)
+All artifacts are stored in S3 for persistence and scalability:
+
+**Task Uploads:**
+- `s3://<bucket>/tasks/<timestamp>-<task-name>.zip`
+
+**Harbor Outputs:**
+- `s3://<bucket>/results/<job-id>/attempt-<index>/`
+  - `config.json`: Trial configuration
+  - `result.json`: Trial results with test scores
+  - `trial.log`: Execution logs
+  - `agent/`: Agent logs (trajectory.json or oracle.txt)
+  - `verifier/`: Test outputs and reward files
+
+### Database
+Job metadata and attempt summaries are stored in PostgreSQL:
+- `jobs`: Job status, task name, S3 URLs
+- `attempts`: Test results, S3 log paths, reward summaries
+- `episodes`: Detailed agent actions and commands
 
 See `GOAL1_ANALYSIS.md` for detailed output structure documentation.
 
