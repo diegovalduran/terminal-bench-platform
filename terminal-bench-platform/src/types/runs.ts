@@ -39,3 +39,12 @@ export interface JobSummary {
   createdAt: string;
   attempts: Attempt[];
 }
+
+export interface JobListItem {
+  id: string;
+  taskName: string;
+  status: JobStatus;
+  runsRequested: number;
+  runsCompleted: number;
+  createdAt: string;
+}

@@ -2,6 +2,9 @@ import { JobOverview } from "@/components/job-overview";
 import { AttemptCard } from "@/components/attempt-card";
 import { mockJob } from "@/data/mock-job";
 import { Separator } from "@/components/ui/separator";
+import { UploadPanel } from "@/components/upload-panel";
+import { JobList } from "@/components/job-list";
+import { mockJobs } from "@/data/mock-jobs";
 
 export default function Home() {
   const job = mockJob;
@@ -21,6 +24,11 @@ export default function Home() {
             the full agent timeline.
           </p>
         </header>
+
+        <div className="grid gap-6 md:grid-cols-[2fr,1fr]">
+          <UploadPanel />
+          <JobList jobs={mockJobs} />
+        </div>
 
         <JobOverview job={job} />
 
