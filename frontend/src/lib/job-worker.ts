@@ -23,8 +23,176 @@ interface HarborTrialResult {
   finished_at: string;
 }
 
+interface TrajectoryStep {
+  observation?: string;
+  thought?: string;
+  action?: string;
+  command?: string;
+  output?: string;
+  exit_code?: number;
+}
+
+interface Trajectory {
+  steps?: TrajectoryStep[];
+  observations?: Array<{
+    state: string;
+    timestamp: string;
+  }>;
+  actions?: Array<{
+    command: string;
+    output: string;
+    exit_code?: number;
+  }>;
+}
+
+async function parseTrajectory(trialDir: string): Promise<{
+  episodes: Array<{
+    stateAnalysis: string;
+    explanation: string;
+    commands: Array<{ command: string; output: string; exitCode?: number }>;
+  }>;
+  totalDurationMs: number;
+}> {
+  const trajectoryPath = join(trialDir, "agent", "trajectory.json");
+  
+  try {
+    const trajectoryContent = await readFile(trajectoryPath, "utf-8");
+    const trajectory: Trajectory = JSON.parse(trajectoryContent);
+    
+    const episodes: Array<{
+      stateAnalysis: string;
+      explanation: string;
+      commands: Array<{ command: string; output: string; exitCode?: number }>;
+    }> = [];
+    
+    // Parse steps-based trajectory (common format)
+    if (trajectory.steps && Array.isArray(trajectory.steps)) {
+      for (const step of trajectory.steps) {
+        const commands: Array<{ command: string; output: string; exitCode?: number }> = [];
+        
+        if (step.command) {
+          commands.push({
+            command: step.command,
+            output: step.output || "",
+            exitCode: step.exit_code,
+          });
+        }
+        
+        episodes.push({
+          stateAnalysis: step.observation || "No observation recorded",
+          explanation: step.thought || step.action || "Agent action",
+          commands,
+        });
+      }
+    }
+    // Parse action-based trajectory (alternative format)
+    else if (trajectory.actions && Array.isArray(trajectory.actions)) {
+      for (const action of trajectory.actions) {
+        episodes.push({
+          stateAnalysis: "Command execution",
+          explanation: `Executed: ${action.command}`,
+          commands: [{
+            command: action.command,
+            output: action.output || "",
+            exitCode: action.exit_code,
+          }],
+        });
+      }
+    }
+    
+    return {
+      episodes: episodes.length > 0 ? episodes : [{
+        stateAnalysis: "No detailed trajectory available",
+        explanation: "Agent completed execution",
+        commands: [],
+      }],
+      totalDurationMs: 0,
+    };
+  } catch (error) {
+    console.error(`[Worker] Failed to parse trajectory:`, error);
+    // Return fallback episode if trajectory parsing fails
+    return {
+      episodes: [{
+        stateAnalysis: "Trajectory parsing failed",
+        explanation: "Could not extract detailed agent actions",
+        commands: [],
+      }],
+      totalDurationMs: 0,
+    };
+  }
+}
+
+async function findTaskDirectory(baseDir: string): Promise<string> {
+  // Check if task.toml exists at the base level
+  const baseTomlPath = join(baseDir, "task.toml");
+  const hasBaseToml = await readFile(baseTomlPath, "utf-8").catch(() => null);
+  
+  if (hasBaseToml) {
+    return baseDir;
+  }
+  
+  // Search one level deep for task.toml
+  const entries = await readdir(baseDir);
+  for (const entry of entries) {
+    const entryPath = join(baseDir, entry);
+    const stats = await stat(entryPath).catch(() => null);
+    
+    if (stats?.isDirectory()) {
+      const subTomlPath = join(entryPath, "task.toml");
+      const hasSubToml = await readFile(subTomlPath, "utf-8").catch(() => null);
+      
+      if (hasSubToml) {
+        return entryPath;
+      }
+    }
+  }
+  
+  throw new Error("Could not find task.toml in the extracted archive. Please ensure the zip contains a valid Terminal-Bench task.");
+}
+
+async function findLatestHarborOutput(outputDir: string): Promise<string> {
+  const allEntries = await readdir(outputDir);
+  const runDirs: string[] = [];
+  
+  for (const name of allEntries) {
+    const entryPath = join(outputDir, name);
+    const stats = await stat(entryPath).catch(() => null);
+    if (stats?.isDirectory()) {
+      runDirs.push(name);
+    }
+  }
+  
+  if (runDirs.length === 0) {
+    throw new Error("Harbor did not create an output directory. Check that Harbor ran successfully.");
+  }
+  
+  // Sort by timestamp (Harbor uses timestamped directories)
+  runDirs.sort().reverse();
+  return join(outputDir, runDirs[0]);
+}
+
+async function findTrialDirectory(runDir: string): Promise<string> {
+  const entries = await readdir(runDir);
+  const trialDirs: string[] = [];
+  
+  for (const name of entries) {
+    const entryPath = join(runDir, name);
+    const stats = await stat(entryPath).catch(() => null);
+    if (stats?.isDirectory()) {
+      trialDirs.push(name);
+    }
+  }
+  
+  if (trialDirs.length === 0) {
+    throw new Error("No trial directory found in Harbor output");
+  }
+  
+  // Harbor typically creates one trial directory per run
+  return join(runDir, trialDirs[0]);
+}
+
 export async function processJob(job: QueuedJob) {
-  console.log(`[Worker] Starting job ${job.jobId}`);
+  console.log(`[Worker] Starting job ${job.jobId} - ${job.taskName}`);
   
   const workDir = join(process.cwd(), "work", job.jobId);
   const taskDir = join(workDir, "task");
@@ -41,28 +209,9 @@ export async function processJob(job: QueuedJob) {
     console.log(`[Worker] Extracting ${job.zipPath} to ${taskDir}`);
     await extract(job.zipPath, { dir: taskDir });
     
-    // Find the extracted task directory (might be nested)
-    const extractedContents = await readFile(join(taskDir, "task.toml"), "utf-8").catch(() => null);
-    let actualTaskDir = taskDir;
-    
-    if (!extractedContents) {
-      // Task might be in a subdirectory
-      const entries = await readdir(taskDir);
-      for (const entry of entries) {
-        const entryPath = join(taskDir, entry);
-        const stats = await stat(entryPath);
-        if (stats.isDirectory()) {
-          const subEntries = await readdir(entryPath);
-          const hasTaskToml = subEntries.includes("task.toml");
-          if (hasTaskToml) {
-            actualTaskDir = entryPath;
-            break;
-          }
-        }
-      }
-    }
-    
-    console.log(`[Worker] Task directory: ${actualTaskDir}`);
+    // Find the actual task directory
+    const actualTaskDir = await findTaskDirectory(taskDir);
+    console.log(`[Worker] Found task directory: ${actualTaskDir}`);
     
     // Run Harbor for each attempt
     for (let i = 0; i < job.runsRequested; i++) {
@@ -74,21 +223,27 @@ export async function processJob(job: QueuedJob) {
         status: "running",
       });
       
+      const attemptStartTime = Date.now();
+      
       try {
         const attemptOutputDir = join(outputDir, `attempt-${i}`);
         await mkdir(attemptOutputDir, { recursive: true });
         
+        // Determine which agent to use based on environment
+        const useTerminus2 = process.env.OPENAI_API_KEY && process.env.OPENAI_API_KEY.length > 0;
+        const agentArgs = useTerminus2
+          ? `--agent terminus-2 --model gpt-5`
+          : `--agent oracle`;
+        
         // Run Harbor CLI
-        // For now, use oracle agent to test the flow
-        // TODO: Switch to terminus-2 with GPT-5 when API key is configured
         const harborCmd = `harbor run \
           --path "${actualTaskDir}" \
-          --agent oracle \
+          ${agentArgs} \
           --env docker \
           --jobs-dir "${attemptOutputDir}" \
           --n-concurrent 1`;
         
-        console.log(`[Worker] Running: ${harborCmd}`);
+        console.log(`[Worker] Running Harbor with ${useTerminus2 ? 'Terminus 2 (GPT-5)' : 'Oracle agent'}`);
         
         const { stdout, stderr } = await execAsync(harborCmd, {
           cwd: process.cwd(),
@@ -98,40 +253,11 @@ export async function processJob(job: QueuedJob) {
         console.log(`[Worker] Harbor stdout:`, stdout.slice(0, 500));
         if (stderr) console.log(`[Worker] Harbor stderr:`, stderr.slice(0, 500));
         
-        // Parse Harbor output
-        // Harbor creates a timestamped directory, find it
-        const allEntries = await readdir(attemptOutputDir);
-        const runDirs = [];
-        for (const name of allEntries) {
-          const stats = await stat(join(attemptOutputDir, name));
-          if (stats.isDirectory()) {
-            runDirs.push(name);
-          }
-        }
-        runDirs.sort().reverse();
-        
-        if (runDirs.length === 0) {
-          throw new Error("No Harbor output directory found");
-        }
-        
-        const latestRunDir = join(attemptOutputDir, runDirs[0]);
+        // Parse Harbor output using helper functions
+        const latestRunDir = await findLatestHarborOutput(attemptOutputDir);
         console.log(`[Worker] Latest run dir: ${latestRunDir}`);
         
-        // Find trial directory
-        const allTrialEntries = await readdir(latestRunDir);
-        const trialDirs = [];
-        for (const name of allTrialEntries) {
-          const stats = await stat(join(latestRunDir, name));
-          if (stats.isDirectory()) {
-            trialDirs.push(name);
-          }
-        }
-        
-        if (trialDirs.length === 0) {
-          throw new Error("No trial directory found in Harbor output");
-        }
-        
-        const trialDir = join(latestRunDir, trialDirs[0]);
+        const trialDir = await findTrialDirectory(latestRunDir);
         console.log(`[Worker] Trial dir: ${trialDir}`);
         
         // Parse result.json
@@ -146,20 +272,30 @@ export async function processJob(job: QueuedJob) {
         
         console.log(`[Worker] Tests: ${testsPassed}/${testsTotal}`);
         
-        // Parse trajectory for episodes (if available)
-        // For now, create a single episode with summary info
-        await createEpisode({
-          attemptId: attempt.id,
-          index: 0,
-          stateAnalysis: `Task completed with ${testsPassed}/${testsTotal} tests passing`,
-          explanation: `Agent: ${result.agent_info.name}`,
-          commands: [],
-          durationMs: new Date(result.finished_at).getTime() - new Date(result.started_at).getTime(),
-        });
+        // Parse trajectory for detailed episodes
+        const { episodes } = await parseTrajectory(trialDir);
+        console.log(`[Worker] Parsed ${episodes.length} episodes from trajectory`);
         
-        // Update attempt
+        // Create episodes in database
+        for (let episodeIdx = 0; episodeIdx < episodes.length; episodeIdx++) {
+          const episode = episodes[episodeIdx];
+          await createEpisode({
+            attemptId: attempt.id,
+            index: episodeIdx,
+            stateAnalysis: episode.stateAnalysis,
+            explanation: episode.explanation,
+            commands: episode.commands,
+            durationMs: undefined, // Could be calculated per-episode if timestamps available
+          });
+        }
+        
+        // Calculate attempt duration
+        const attemptDuration = Date.now() - attemptStartTime;
+        const attemptStatus = testsPassed === testsTotal ? "completed" : "failed";
+        
+        // Update attempt with results
         await updateAttempt(attempt.id, {
-          status: testsPassed === testsTotal ? "success" : "failed",
+          status: attemptStatus,
           testsPassed,
           testsTotal,
           rewardSummary: rewards,
@@ -169,34 +305,59 @@ export async function processJob(job: QueuedJob) {
         // Increment job progress
         await incrementJobProgress(job.jobId);
         
-        console.log(`[Worker] Completed attempt ${i + 1}`);
+        console.log(
+          `[Worker] Attempt ${i + 1} ${attemptStatus}: ${testsPassed}/${testsTotal} tests passed (${(attemptDuration / 1000).toFixed(1)}s)`
+        );
       } catch (error) {
-        console.error(`[Worker] Attempt ${i + 1} failed:`, error);
+        const attemptDuration = Date.now() - attemptStartTime;
+        const errorMessage = error instanceof Error ? error.message : "Unknown error";
+        
+        console.error(`[Worker] Attempt ${i + 1} failed after ${(attemptDuration / 1000).toFixed(1)}s:`, errorMessage);
+        
+        // Update attempt with failure status
         await updateAttempt(attempt.id, {
           status: "failed",
           finishedAt: new Date(),
         });
-        // Continue with next attempt
+        
+        // Create a fallback episode explaining the error
+        await createEpisode({
+          attemptId: attempt.id,
+          index: 0,
+          stateAnalysis: "Attempt failed during execution",
+          explanation: `Error: ${errorMessage}`,
+          commands: [],
+        });
+        
+        // Continue with next attempt (don't fail entire job)
+        console.log(`[Worker] Continuing with next attempt...`);
       }
     }
     
+    // Job completed - update status
     await updateJobStatus(job.jobId, "completed");
-    console.log(`[Worker] Completed job ${job.jobId}`);
+    console.log(`[Worker] ✅ Job ${job.jobId} completed successfully`);
   } catch (error) {
-    console.error(`[Worker] Error processing job ${job.jobId}:`, error);
-    await updateJobStatus(
-      job.jobId,
-      "failed",
-      error instanceof Error ? error.message : "Unknown error"
-    );
-    throw error;
+    const errorMessage = error instanceof Error ? error.message : "Unknown error";
+    console.error(`[Worker] ❌ Job ${job.jobId} failed:`, errorMessage);
+    
+    // Update job status to failed
+    await updateJobStatus(job.jobId, "failed", errorMessage);
+    
+    // Don't re-throw - let the queue continue processing other jobs
   } finally {
-    // Cleanup work directory
+    // Cleanup work directory and uploaded zip
     try {
+      // Remove work directory
       await rm(workDir, { recursive: true, force: true });
-      console.log(`[Worker] Cleaned up ${workDir}`);
+      console.log(`[Worker] Cleaned up work directory: ${workDir}`);
+      
+      // Remove uploaded zip file
+      await rm(job.zipPath, { force: true });
+      console.log(`[Worker] Cleaned up uploaded file: ${job.zipPath}`);
     } catch (cleanupError) {
-      console.error(`[Worker] Failed to cleanup ${workDir}:`, cleanupError);
+      console.error(`[Worker] Failed to cleanup files:`, cleanupError);
+      // Don't fail the job because of cleanup errors
     }
   }
 }
