@@ -19,3 +19,8 @@ terminal-bench-2/.cache/
 .vscode/
 .idea/
 
+# Frontend (Next.js)
+frontend/node_modules/
+frontend/.next/
+frontend/.env*.local
+

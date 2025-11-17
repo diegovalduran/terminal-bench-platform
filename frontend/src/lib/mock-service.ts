@@ -1,7 +1,7 @@
 import { eq, inArray } from "drizzle-orm";
 import { db } from "@/db/client";
 import { episodes, jobs } from "@/db/schema";
-import { JobDetailResponse, JobListResponse, JobStatus } from "@/types/runs";
+import { JobDetailResponse, JobListResponse } from "@/types/runs";
 import { mockJob } from "@/data/mock-job";
 import { mockJobs } from "@/data/mock-jobs";
 
@@ -20,12 +20,7 @@ export async function fetchJobList(): Promise<JobListResponse> {
       .orderBy(jobs.createdAt);
 
     if (dbJobs.length) {
-      const normalizedJobs = dbJobs.map((job) => ({
-        ...job,
-        status: job.status as JobStatus,
-        createdAt: job.createdAt.toISOString(),
-      }));
-      return { jobs: normalizedJobs };
+      return { jobs: dbJobs };
     }
   }
 
@@ -68,9 +63,7 @@ export async function fetchJobDetail(jobId: string): Promise<JobDetailResponse> 
             testsTotal: attempt.testsTotal,
             startedAt: attempt.startedAt?.toISOString(),
             finishedAt: attempt.finishedAt?.toISOString(),
-            rewardSummary: attempt.rewardSummary
-              ? (attempt.rewardSummary as Record<string, number>)
-              : undefined,
+            rewardSummary: attempt.rewardSummary ?? undefined,
             logPath: attempt.logPath ?? undefined,
             episodes: episodeRecords
               .filter((episode) => episode.attemptId === attempt.id)
