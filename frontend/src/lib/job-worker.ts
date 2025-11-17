@@ -1,5 +1,4 @@
-import { exec } from "child_process";
-import { promisify } from "util";
+import { spawn, ChildProcess } from "child_process";
 import { mkdir, readFile, rm, readdir, stat } from "fs/promises";
 import { join } from "path";
 import extract from "extract-zip";
@@ -7,7 +6,101 @@ import { QueuedJob } from "./job-queue";
 import { updateJobStatus, incrementJobProgress } from "./job-service";
 import { createAttempt, updateAttempt, createEpisode } from "./attempt-service";
 
-const execAsync = promisify(exec);
+// Process registry for tracking and cancelling jobs
+interface RunningJob {
+  jobId: string;
+  process: ChildProcess | null;
+  cancelled: boolean;
+}
+
+const runningJobs = new Map<string, RunningJob>();
+
+export function cancelJob(jobId: string): boolean {
+  const job = runningJobs.get(jobId);
+  if (!job) {
+    console.log(`[Worker] Job ${jobId} not found in running jobs`);
+    return false;
+  }
+
+  console.log(`[Worker] Cancelling job ${jobId}...`);
+  job.cancelled = true;
+
+  if (job.process && !job.process.killed) {
+    // Kill the process and all its children
+    try {
+      process.kill(-job.process.pid!, "SIGTERM");
+      console.log(`[Worker] Sent SIGTERM to process group ${job.process.pid}`);
+    } catch (error) {
+      console.error(`[Worker] Error killing process:`, error);
+      // Try direct kill as fallback
+      job.process.kill("SIGKILL");
+    }
+  }
+
+  return true;
+}
+
+function isJobCancelled(jobId: string): boolean {
+  return runningJobs.get(jobId)?.cancelled ?? false;
+}
+
+function runHarborCommand(
+  command: string,
+  args: string[],
+  jobId: string,
+  options: { cwd: string; timeout: number }
+): Promise<{ stdout: string; stderr: string }> {
+  return new Promise((resolve, reject) => {
+    const child = spawn(command, args, {
+      cwd: options.cwd,
+      detached: true, // Create new process group for easier killing
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+
+    // Update running job with process reference
+    const runningJob = runningJobs.get(jobId);
+    if (runningJob) {
+      runningJob.process = child;
+    }
+
+    let stdout = '';
+    let stderr = '';
+
+    child.stdout?.on('data', (data) => {
+      stdout += data.toString();
+    });
+
+    child.stderr?.on('data', (data) => {
+      stderr += data.toString();
+    });
+
+    const timeout = setTimeout(() => {
+      try {
+        process.kill(-child.pid!, "SIGTERM");
+      } catch {
+        child.kill("SIGKILL");
+      }
+      reject(new Error(`Harbor command timed out after ${options.timeout}ms`));
+    }, options.timeout);
+
+    child.on('exit', (code, signal) => {
+      clearTimeout(timeout);
+      
+      if (signal === 'SIGTERM' || signal === 'SIGKILL') {
+        reject(new Error('Job cancelled'));
+      } else if (code === 0) {
+        resolve({ stdout, stderr });
+      } else {
+        reject(new Error(`Harbor exited with code ${code}\nStderr: ${stderr}`));
+      }
+    });
+
+    child.on('error', (error) => {
+      clearTimeout(timeout);
+      reject(error);
+    });
+  });
+}
 
 interface HarborTrialResult {
   agent_info: {
@@ -194,12 +287,24 @@ async function findTrialDirectory(runDir: string): Promise<string> {
 export async function processJob(job: QueuedJob) {
   console.log(`[Worker] Starting job ${job.jobId} - ${job.taskName}`);
   
+  // Register job for cancellation tracking
+  runningJobs.set(job.jobId, {
+    jobId: job.jobId,
+    process: null,
+    cancelled: false,
+  });
+  
   const workDir = join(process.cwd(), "work", job.jobId);
   const taskDir = join(workDir, "task");
   const outputDir = join(workDir, "harbor-runs");
   
   try {
     await updateJobStatus(job.jobId, "running");
+    
+    // Check for cancellation before starting
+    if (isJobCancelled(job.jobId)) {
+      throw new Error("Job cancelled before starting");
+    }
     
     // Create working directories
     await mkdir(workDir, { recursive: true });
@@ -215,6 +320,12 @@ export async function processJob(job: QueuedJob) {
     
     // Run Harbor for each attempt
     for (let i = 0; i < job.runsRequested; i++) {
+      // Check for cancellation before each attempt
+      if (isJobCancelled(job.jobId)) {
+        console.log(`[Worker] Job ${job.jobId} cancelled, stopping attempts`);
+        throw new Error("Job cancelled");
+      }
+      
       console.log(`[Worker] Job ${job.jobId} - Attempt ${i + 1}/${job.runsRequested}`);
       
       const attempt = await createAttempt({
@@ -231,24 +342,27 @@ export async function processJob(job: QueuedJob) {
         
         // Determine which agent to use based on environment
         const useTerminus2 = process.env.OPENAI_API_KEY && process.env.OPENAI_API_KEY.length > 0;
-        const agentArgs = useTerminus2
-          ? `--agent terminus-2 --model gpt-5`
-          : `--agent oracle`;
-        
-        // Run Harbor CLI
-        const harborCmd = `harbor run \
-          --path "${actualTaskDir}" \
-          ${agentArgs} \
-          --env docker \
-          --jobs-dir "${attemptOutputDir}" \
-          --n-concurrent 1`;
+        const harborArgs = [
+          'run',
+          '--path', actualTaskDir,
+          '--agent', useTerminus2 ? 'terminus-2' : 'oracle',
+          ...(useTerminus2 ? ['--model', 'gpt-5'] : []),
+          '--env', 'docker',
+          '--jobs-dir', attemptOutputDir,
+          '--n-concurrent', '1',
+        ];
         
         console.log(`[Worker] Running Harbor with ${useTerminus2 ? 'Terminus 2 (GPT-5)' : 'Oracle agent'}`);
         
-        const { stdout, stderr } = await execAsync(harborCmd, {
-          cwd: process.cwd(),
-          timeout: 15 * 60 * 1000, // 15 minutes
-        });
+        const { stdout, stderr } = await runHarborCommand(
+          'harbor',
+          harborArgs,
+          job.jobId,
+          {
+            cwd: process.cwd(),
+            timeout: 15 * 60 * 1000, // 15 minutes
+          }
+        );
         
         console.log(`[Worker] Harbor stdout:`, stdout.slice(0, 500));
         if (stderr) console.log(`[Worker] Harbor stderr:`, stderr.slice(0, 500));
@@ -339,13 +453,22 @@ export async function processJob(job: QueuedJob) {
     console.log(`[Worker] ✅ Job ${job.jobId} completed successfully`);
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : "Unknown error";
-    console.error(`[Worker] ❌ Job ${job.jobId} failed:`, errorMessage);
     
-    // Update job status to failed
-    await updateJobStatus(job.jobId, "failed", errorMessage);
+    // Check if job was cancelled
+    if (isJobCancelled(job.jobId) || errorMessage.includes("cancelled")) {
+      console.log(`[Worker] 🛑 Job ${job.jobId} cancelled`);
+      await updateJobStatus(job.jobId, "failed", "Job cancelled by user");
+    } else {
+      console.error(`[Worker] ❌ Job ${job.jobId} failed:`, errorMessage);
+      await updateJobStatus(job.jobId, "failed", errorMessage);
+    }
     
     // Don't re-throw - let the queue continue processing other jobs
   } finally {
+    // Unregister job from running jobs
+    runningJobs.delete(job.jobId);
+    console.log(`[Worker] Unregistered job ${job.jobId}`);
+    
     // Cleanup work directory and uploaded zip
     try {
       // Remove work directory

@@ -2,12 +2,13 @@ import { NextResponse } from "next/server";
 import { fetchJobDetail } from "@/lib/job-data-service";
 
 interface Params {
-  params: { id: string };
+  params: Promise<{ id: string }>;
 }
 
 export async function GET(_request: Request, { params }: Params) {
   try {
-    const { job } = await fetchJobDetail(params.id);
+    const { id } = await params;
+    const { job } = await fetchJobDetail(id);
     return NextResponse.json({ job });
   } catch (error) {
     console.error("[API] Error fetching job detail:", error);
