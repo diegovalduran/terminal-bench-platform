@@ -10,7 +10,7 @@ Run 1 terminal bench task locally using bash commands via Harbor and analyze the
 
 ## Goal 2: Scoring and Observability 🚧
 
-**Status**: In Progress
+**Status**: MVP Complete - Ready for Testing
 
 Build a hosted application where users can:
 - Upload zipped Terminal-Bench tasks
@@ -26,7 +26,24 @@ Build a hosted application where users can:
 ✅ **Worker Pipeline**: Harbor execution with task unzipping and output parsing  
 ✅ **Live UI Updates**: SWR polling for real-time job/attempt status  
 ✅ **Error Handling**: Toast notifications and loading states  
+✅ **Trajectory Parsing**: Extract detailed episodes from agent logs  
 ⏳ **Integration Testing**: Need database + OpenAI API key to test end-to-end
+
+## Goal 3: Run Persistence and Comparison 🚧
+
+**Status**: Core Features Complete
+
+Enable multiple users to upload and run multiple tasks concurrently without interference.
+
+### Progress
+
+✅ **Concurrent Job Processing**: Queue supports up to 5 simultaneous jobs  
+✅ **Job Isolation**: Each job has isolated work directories and file storage  
+✅ **Queue Status UI**: Real-time display of running/queued jobs  
+✅ **Database Persistence**: All runs stored with full history  
+✅ **User Schema**: Database ready for multi-user support  
+⏳ **User Authentication**: Not yet implemented  
+⏳ **Comparison UI**: Need clarification on requirements
 
 ## Prerequisites
 

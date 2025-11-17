@@ -2,6 +2,7 @@
 
 import { UploadPanel } from "@/components/upload-panel";
 import { JobList } from "@/components/job-list";
+import { QueueStatus } from "@/components/queue-status";
 import { useJobs } from "@/hooks/use-jobs";
 import { Loader2 } from "lucide-react";
 
@@ -26,13 +27,16 @@ export default function Home() {
 
         <div className="grid gap-6 md:grid-cols-[2fr,1fr]">
           <UploadPanel />
-          {isLoading ? (
-            <div className="flex items-center justify-center rounded-lg border border-zinc-200 bg-white p-8">
-              <Loader2 className="h-5 w-5 animate-spin text-zinc-400" />
-            </div>
-          ) : (
-            <JobList jobs={jobs} />
-          )}
+          <div className="space-y-4">
+            <QueueStatus />
+            {isLoading ? (
+              <div className="flex items-center justify-center rounded-lg border border-zinc-200 bg-white p-8">
+                <Loader2 className="h-5 w-5 animate-spin text-zinc-400" />
+              </div>
+            ) : (
+              <JobList jobs={jobs} />
+            )}
+          </div>
         </div>
       </div>
     </div>

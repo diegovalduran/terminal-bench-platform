@@ -291,7 +291,7 @@ export async function processJob(job: QueuedJob) {
         
         // Calculate attempt duration
         const attemptDuration = Date.now() - attemptStartTime;
-        const attemptStatus = testsPassed === testsTotal ? "completed" : "failed";
+        const attemptStatus = testsPassed === testsTotal ? "success" : "failed";
         
         // Update attempt with results
         await updateAttempt(attempt.id, {
