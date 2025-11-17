@@ -48,3 +48,11 @@ export interface JobListItem {
   runsCompleted: number;
   createdAt: string;
 }
+
+export interface JobDetailResponse {
+  job: JobSummary;
+}
+
+export interface JobListResponse {
+  jobs: JobListItem[];
+}

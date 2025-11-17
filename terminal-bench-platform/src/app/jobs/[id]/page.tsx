@@ -1,36 +1,33 @@
+import { notFound } from "next/navigation";
+import { fetchJobDetail } from "@/lib/mock-service";
 import { JobOverview } from "@/components/job-overview";
 import { AttemptCard } from "@/components/attempt-card";
 import { Separator } from "@/components/ui/separator";
-import { UploadPanel } from "@/components/upload-panel";
-import { JobList } from "@/components/job-list";
-import { fetchJobDetail, fetchJobList } from "@/lib/mock-service";
 
-export default async function Home() {
-  const [{ job }, { jobs }] = await Promise.all([
-    fetchJobDetail("job-sample-001"),
-    fetchJobList(),
-  ]);
+interface JobDetailPageProps {
+  params: { id: string };
+}
+
+export default async function JobDetailPage({ params }: JobDetailPageProps) {
+  const { id } = params;
+  const { job } = await fetchJobDetail(id);
+
+  if (!job) {
+    notFound();
+  }
 
   return (
     <div className="min-h-screen bg-zinc-50 py-10">
-      <div className="mx-auto flex max-w-6xl flex-col gap-8 px-4 md:px-8">
-        <header className="space-y-2">
+      <div className="mx-auto flex max-w-5xl flex-col gap-8 px-4 md:px-6">
+        <header className="space-y-1">
           <p className="text-sm font-medium uppercase tracking-[0.3em] text-zinc-500">
-            Terminal Bench Platform
+            Job Detail
           </p>
-          <h1 className="text-4xl font-semibold text-zinc-900">
-            Scoring & Observability
+          <h1 className="text-3xl font-semibold text-zinc-900">
+            {job.taskName}
           </h1>
-          <p className="text-zinc-600">
-            Upload Terminal-Bench tasks, run Terminus 2 ten times, and inspect
-            the full agent timeline.
-          </p>
+          <p className="text-sm text-zinc-500">Job ID: {job.id}</p>
         </header>
-
-        <div className="grid gap-6 md:grid-cols-[2fr,1fr]">
-          <UploadPanel />
-          <JobList jobs={jobs} />
-        </div>
 
         <JobOverview job={job} />
 
@@ -40,7 +37,7 @@ export default async function Home() {
               Attempts ({job.attempts.length}/{job.runsRequested})
             </h2>
             <p className="text-sm text-zinc-500">
-              Viewing mock data — live runs coming soon
+              Viewing mock data — wiring to live API soon
             </p>
           </div>
           <Separator />
@@ -54,3 +51,4 @@ export default async function Home() {
     </div>
   );
 }
+
