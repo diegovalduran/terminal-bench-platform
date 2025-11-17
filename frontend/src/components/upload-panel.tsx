@@ -12,10 +12,33 @@ export function UploadPanel() {
   const [runs, setRuns] = useState(10);
   const [file, setFile] = useState<File | null>(null);
   const [uploading, setUploading] = useState(false);
+  const [isDragging, setIsDragging] = useState(false);
 
   const handleFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
     const selectedFile = event.target.files?.[0] || null;
     setFile(selectedFile);
+  };
+
+  const handleDragOver = (event: React.DragEvent<HTMLLabelElement>) => {
+    event.preventDefault();
+    setIsDragging(true);
+  };
+
+  const handleDragLeave = (event: React.DragEvent<HTMLLabelElement>) => {
+    event.preventDefault();
+    setIsDragging(false);
+  };
+
+  const handleDrop = (event: React.DragEvent<HTMLLabelElement>) => {
+    event.preventDefault();
+    setIsDragging(false);
+
+    const droppedFile = event.dataTransfer.files[0];
+    if (droppedFile && droppedFile.name.endsWith(".zip")) {
+      setFile(droppedFile);
+    } else {
+      toast.error("Please drop a .zip file");
+    }
   };
 
   const handleUpload = async () => {
@@ -71,7 +94,14 @@ export function UploadPanel() {
       <CardContent className="space-y-4">
         <label
           htmlFor="taskZip"
-          className="flex cursor-pointer flex-col items-center justify-center rounded-2xl border border-zinc-200 bg-zinc-50 px-6 py-10 text-center hover:border-zinc-400"
+          onDragOver={handleDragOver}
+          onDragLeave={handleDragLeave}
+          onDrop={handleDrop}
+          className={`flex cursor-pointer flex-col items-center justify-center rounded-2xl border px-6 py-10 text-center transition-colors ${
+            isDragging
+              ? "border-blue-400 bg-blue-50"
+              : "border-zinc-200 bg-zinc-50 hover:border-zinc-400"
+          }`}
         >
           <span className="text-sm font-medium text-zinc-700">
             {file ? file.name : "Drag & drop zip here or click to browse"}
