@@ -6,9 +6,11 @@ import { toast } from "sonner";
 import { useJob } from "@/hooks/use-job";
 import { JobOverview } from "@/components/job-overview";
 import { AttemptCard } from "@/components/attempt-card";
+import { ErrorState } from "@/components/error-state";
+import { JobDetailSkeleton } from "@/components/loading-skeleton";
 import { Separator } from "@/components/ui/separator";
 import { Button } from "@/components/ui/button";
-import { ArrowLeft, Loader2, XCircle } from "lucide-react";
+import { ArrowLeft, XCircle, Loader2 } from "lucide-react";
 
 interface JobDetailPageProps {
   params: Promise<{ id: string }>;
@@ -54,24 +56,32 @@ export default function JobDetailPage({ params }: JobDetailPageProps) {
   };
 
   if (isLoading) {
-    return (
-      <div className="flex min-h-screen items-center justify-center bg-zinc-50">
-        <div className="flex items-center gap-2 text-zinc-600">
-          <Loader2 className="h-5 w-5 animate-spin" />
-          <span>Loading job details...</span>
-        </div>
-      </div>
-    );
+    return <JobDetailSkeleton />;
   }
 
   if (isError || !job) {
     return (
-      <div className="flex min-h-screen items-center justify-center bg-zinc-50">
-        <div className="text-center">
-          <h2 className="text-xl font-semibold text-zinc-900">Job not found</h2>
-          <p className="text-sm text-zinc-500">
-            The requested job could not be loaded.
-          </p>
+      <div className="min-h-screen bg-zinc-50 py-10">
+        <div className="mx-auto flex max-w-5xl flex-col gap-8 px-4 md:px-6">
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => router.push("/")}
+            className="mb-2 -ml-2 w-fit text-zinc-600 hover:text-zinc-900"
+          >
+            <ArrowLeft className="mr-2 h-4 w-4" />
+            Back to Home
+          </Button>
+          <ErrorState
+            title="Job not found"
+            message={
+              isError
+                ? "Unable to load job details. The job may not exist or there was a connection error."
+                : "The requested job could not be found."
+            }
+            onRetry={() => mutate()}
+            retryLabel="Reload"
+          />
         </div>
       </div>
     );

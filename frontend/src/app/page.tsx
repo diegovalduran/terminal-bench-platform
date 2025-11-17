@@ -3,11 +3,12 @@
 import { UploadPanel } from "@/components/upload-panel";
 import { JobList } from "@/components/job-list";
 import { QueueStatus } from "@/components/queue-status";
+import { ErrorState } from "@/components/error-state";
+import { JobListSkeleton } from "@/components/loading-skeleton";
 import { useJobs } from "@/hooks/use-jobs";
-import { Loader2 } from "lucide-react";
 
 export default function Home() {
-  const { jobs, isLoading } = useJobs();
+  const { jobs, isLoading, isError, mutate } = useJobs();
 
   return (
     <div className="min-h-screen bg-zinc-50 py-10">
@@ -25,19 +26,23 @@ export default function Home() {
           </p>
         </header>
 
-        <div className="grid gap-6 md:grid-cols-[2fr,1fr]">
+        <div className="grid gap-6 lg:grid-cols-[2fr,1fr]">
           <UploadPanel />
           <div className="space-y-4">
             <QueueStatus />
             {isLoading ? (
-              <div className="flex items-center justify-center rounded-lg border border-zinc-200 bg-white p-8">
-                <Loader2 className="h-5 w-5 animate-spin text-zinc-400" />
-              </div>
+              <JobListSkeleton />
+            ) : isError ? (
+              <ErrorState
+                title="Failed to load jobs"
+                message="Unable to fetch job list. Please check your connection and try again."
+                onRetry={() => mutate()}
+              />
             ) : (
-          <JobList jobs={jobs} />
+              <JobList jobs={jobs} />
             )}
           </div>
-          </div>
+        </div>
       </div>
     </div>
   );
