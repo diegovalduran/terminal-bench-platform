@@ -3,7 +3,7 @@ import { writeFile, mkdir } from "fs/promises";
 import { join } from "path";
 import { createJob } from "@/lib/job-service";
 import { jobQueue } from "@/lib/job-queue";
-import { fetchJobList } from "@/lib/mock-service";
+import { fetchJobList } from "@/lib/job-data-service";
 
 export async function GET() {
   try {
