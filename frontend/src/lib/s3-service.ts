@@ -7,6 +7,7 @@ import {
 } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import { Readable } from "stream";
+import { retry, isRetryableError } from "./retry";
 
 // Initialize S3 client
 const s3Client = new S3Client({
@@ -38,10 +39,28 @@ export async function uploadFile(
     ContentType: contentType,
   });
 
-  await s3Client.send(command);
+  try {
+    await retry(
+      () => s3Client.send(command),
+      {
+        maxAttempts: 3,
+        delayMs: 1000,
+        onRetry: (attempt, error) => {
+          console.warn(
+            `[S3] Upload retry ${attempt}/3 for ${key}: ${error.message}`
+          );
+        },
+      }
+    );
 
-  // Return the S3 URL
-  return `s3://${BUCKET_NAME}/${key}`;
+    // Return the S3 URL
+    return `s3://${BUCKET_NAME}/${key}`;
+  } catch (error) {
+    const errorMessage =
+      error instanceof Error ? error.message : "Unknown error";
+    console.error(`[S3] Failed to upload ${key}: ${errorMessage}`);
+    throw new Error(`S3 upload failed: ${errorMessage}`);
+  }
 }
 
 /**
@@ -107,17 +126,35 @@ export async function downloadFile(key: string): Promise<Buffer> {
     Key: key,
   });
 
-  const response = await s3Client.send(command);
+  try {
+    const response = await retry(
+      () => s3Client.send(command),
+      {
+        maxAttempts: 3,
+        delayMs: 1000,
+        onRetry: (attempt, error) => {
+          console.warn(
+            `[S3] Download retry ${attempt}/3 for ${key}: ${error.message}`
+          );
+        },
+      }
+    );
 
-  // Convert stream to buffer
-  const stream = response.Body as Readable;
-  const chunks: Uint8Array[] = [];
-  
-  for await (const chunk of stream) {
-    chunks.push(chunk);
+    // Convert stream to buffer
+    const stream = response.Body as Readable;
+    const chunks: Uint8Array[] = [];
+    
+    for await (const chunk of stream) {
+      chunks.push(chunk);
+    }
+
+    return Buffer.concat(chunks);
+  } catch (error) {
+    const errorMessage =
+      error instanceof Error ? error.message : "Unknown error";
+    console.error(`[S3] Failed to download ${key}: ${errorMessage}`);
+    throw new Error(`S3 download failed: ${errorMessage}`);
   }
-
-  return Buffer.concat(chunks);
 }
 
 /**

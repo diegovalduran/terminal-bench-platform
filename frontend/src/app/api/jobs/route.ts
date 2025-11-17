@@ -3,6 +3,10 @@ import { createJob } from "@/lib/job-service";
 import { jobQueue } from "@/lib/job-queue";
 import { fetchJobList } from "@/lib/job-data-service";
 import { uploadFile } from "@/lib/s3-service";
+import { validateStartup } from "@/lib/startup-validation";
+
+// Validate environment on first API call
+validateStartup();
 
 export async function GET() {
   try {
