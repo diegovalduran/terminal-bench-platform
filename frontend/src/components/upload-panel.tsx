@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
+import { toast } from "sonner";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -11,22 +12,19 @@ export function UploadPanel() {
   const [runs, setRuns] = useState(10);
   const [file, setFile] = useState<File | null>(null);
   const [uploading, setUploading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
 
   const handleFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
     const selectedFile = event.target.files?.[0] || null;
     setFile(selectedFile);
-    setError(null);
   };
 
   const handleUpload = async () => {
     if (!file) {
-      setError("Please select a zip file");
+      toast.error("Please select a zip file");
       return;
     }
 
     setUploading(true);
-    setError(null);
 
     try {
       const formData = new FormData();
@@ -46,11 +44,17 @@ export function UploadPanel() {
       const data = await response.json();
       console.log("Job created:", data);
 
+      toast.success("Task uploaded successfully!", {
+        description: `Job ${data.jobId.slice(0, 8)}... queued for ${runs} runs`,
+      });
+
       // Redirect to job detail page
       router.push(`/jobs/${data.jobId}`);
     } catch (err) {
       console.error("Upload error:", err);
-      setError(err instanceof Error ? err.message : "Failed to upload");
+      toast.error("Upload failed", {
+        description: err instanceof Error ? err.message : "Failed to upload task",
+      });
     } finally {
       setUploading(false);
     }
@@ -84,12 +88,6 @@ export function UploadPanel() {
             disabled={uploading}
           />
         </label>
-
-        {error && (
-          <div className="rounded-lg bg-red-50 p-3 text-sm text-red-700">
-            {error}
-          </div>
-        )}
 
         <div className="flex items-center gap-3">
           <div className="flex-1 space-y-1">

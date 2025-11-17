@@ -2,26 +2,31 @@
 
 A platform for running and analyzing Terminal-Bench tasks using the Harbor harness (Terminal-Bench 2).
 
-## Goal 1: Run Locally 
+## Goal 1: Run Locally ✅
 
-**Status**: Setup complete! Ready to run tasks once Docker is installed.
+**Status**: Complete
 
 Run 1 terminal bench task locally using bash commands via Harbor and analyze the output of the run, where it saves, and the running process.
 
-### What's Been Done
+## Goal 2: Scoring and Observability 🚧
 
-✅ **Project Structure**: Created and organized  
-✅ **Harbor Installed**: Harbor harness installed and configured  
-✅ **Terminal-Bench 2 Tasks**: Cloned repository with all tasks  
-✅ **Documentation**: Created comprehensive setup and analysis guides  
-✅ **Run Script**: Created script to easily run tasks locally  
-✅ **Output Analysis**: Documented output structure and analysis methods  
+**Status**: In Progress
 
-### Next Step
+Build a hosted application where users can:
+- Upload zipped Terminal-Bench tasks
+- Run Terminus 2 agent multiple times (configurable, default 10)
+- View live updates of agent execution
+- Inspect detailed logs, episodes, and test results
 
-**Install Docker** to run tasks:
-- macOS: `brew install --cask docker` or download from [docker.com](https://www.docker.com/products/docker-desktop/)
-- Then run: `./run_task_local.sh build-cython-ext`
+### Progress
+
+✅ **Frontend Scaffold**: Next.js 15 + Tailwind + shadcn/ui  
+✅ **Database Schema**: PostgreSQL with Drizzle ORM (jobs, attempts, episodes)  
+✅ **File Upload**: Multipart upload handler + job creation  
+✅ **Worker Pipeline**: Harbor execution with task unzipping and output parsing  
+✅ **Live UI Updates**: SWR polling for real-time job/attempt status  
+✅ **Error Handling**: Toast notifications and loading states  
+⏳ **Integration Testing**: Need database + OpenAI API key to test end-to-end
 
 ## Prerequisites
 
@@ -29,8 +34,12 @@ Run 1 terminal bench task locally using bash commands via Harbor and analyze the
 - ⏳ Docker (required for containerized task execution)
 - ✅ Git (installed)
 - ✅ Harbor (installed)
+- ⏳ PostgreSQL (for Goal 2 web app)
+- ⏳ Node.js 18+ (for Goal 2 web app)
 
 ## Quick Start
+
+### Goal 1: Local CLI Runs
 
 1. **Install Docker** (see `SETUP.md` for details)
 2. **Run a task**:
@@ -45,6 +54,33 @@ Run 1 terminal bench task locally using bash commands via Harbor and analyze the
    # View trial results
    cat runs/<job-id>/trials/<trial-id>/result.json | python3 -m json.tool
    ```
+
+### Goal 2: Web Application
+
+1. **Install dependencies**:
+   ```bash
+   cd frontend
+   npm install
+   ```
+
+2. **Setup database**:
+   ```bash
+   # Create a PostgreSQL database (local or hosted like Supabase/Neon)
+   # Copy env.template to .env.local and update DATABASE_URL
+   cp env.template .env.local
+   
+   # Generate and run migrations
+   npm run db:generate
+   npm run db:migrate
+   ```
+
+3. **Run development server**:
+   ```bash
+   npm run dev
+   ```
+
+4. **Access the app**:
+   Open [http://localhost:3000](http://localhost:3000)
 
 ## Project Structure
 

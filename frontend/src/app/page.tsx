@@ -1,15 +1,12 @@
-import { JobOverview } from "@/components/job-overview";
-import { AttemptCard } from "@/components/attempt-card";
-import { Separator } from "@/components/ui/separator";
+"use client";
+
 import { UploadPanel } from "@/components/upload-panel";
 import { JobList } from "@/components/job-list";
-import { fetchJobDetail, fetchJobList } from "@/lib/mock-service";
+import { useJobs } from "@/hooks/use-jobs";
+import { Loader2 } from "lucide-react";
 
-export default async function Home() {
-  const [{ job }, { jobs }] = await Promise.all([
-    fetchJobDetail("job-sample-001"),
-    fetchJobList(),
-  ]);
+export default function Home() {
+  const { jobs, isLoading } = useJobs();
 
   return (
     <div className="min-h-screen bg-zinc-50 py-10">
@@ -29,27 +26,14 @@ export default async function Home() {
 
         <div className="grid gap-6 md:grid-cols-[2fr,1fr]">
           <UploadPanel />
-          <JobList jobs={jobs} />
+          {isLoading ? (
+            <div className="flex items-center justify-center rounded-lg border border-zinc-200 bg-white p-8">
+              <Loader2 className="h-5 w-5 animate-spin text-zinc-400" />
+            </div>
+          ) : (
+            <JobList jobs={jobs} />
+          )}
         </div>
-
-        <JobOverview job={job} />
-
-        <section className="space-y-4">
-          <div className="flex items-center justify-between">
-            <h2 className="text-lg font-semibold text-zinc-900">
-              Attempts ({job.attempts.length}/{job.runsRequested})
-            </h2>
-            <p className="text-sm text-zinc-500">
-              Viewing mock data — live runs coming soon
-            </p>
-          </div>
-          <Separator />
-          <div className="grid gap-6">
-            {job.attempts.map((attempt) => (
-              <AttemptCard key={attempt.id} attempt={attempt} />
-            ))}
-          </div>
-        </section>
       </div>
     </div>
   );

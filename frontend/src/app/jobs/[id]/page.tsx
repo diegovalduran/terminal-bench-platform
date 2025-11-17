@@ -1,19 +1,41 @@
-import { notFound } from "next/navigation";
-import { fetchJobDetail } from "@/lib/mock-service";
+"use client";
+
+import { useJob } from "@/hooks/use-job";
 import { JobOverview } from "@/components/job-overview";
 import { AttemptCard } from "@/components/attempt-card";
 import { Separator } from "@/components/ui/separator";
+import { Loader2 } from "lucide-react";
 
 interface JobDetailPageProps {
   params: { id: string };
 }
 
-export default async function JobDetailPage({ params }: JobDetailPageProps) {
+export default function JobDetailPage({ params }: JobDetailPageProps) {
   const { id } = params;
-  const { job } = await fetchJobDetail(id);
+  const { job, isLoading, isError } = useJob(id);
 
-  if (!job) {
-    notFound();
+  if (isLoading) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-zinc-50">
+        <div className="flex items-center gap-2 text-zinc-600">
+          <Loader2 className="h-5 w-5 animate-spin" />
+          <span>Loading job details...</span>
+        </div>
+      </div>
+    );
+  }
+
+  if (isError || !job) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-zinc-50">
+        <div className="text-center">
+          <h2 className="text-xl font-semibold text-zinc-900">Job not found</h2>
+          <p className="text-sm text-zinc-500">
+            The requested job could not be loaded.
+          </p>
+        </div>
+      </div>
+    );
   }
 
   return (
@@ -36,15 +58,24 @@ export default async function JobDetailPage({ params }: JobDetailPageProps) {
             <h2 className="text-lg font-semibold text-zinc-900">
               Attempts ({job.attempts.length}/{job.runsRequested})
             </h2>
-            <p className="text-sm text-zinc-500">
-              Viewing mock data — wiring to live API soon
-            </p>
+            {job.status === "processing" && (
+              <div className="flex items-center gap-1.5 text-sm text-blue-600">
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                <span>Updating live...</span>
+              </div>
+            )}
           </div>
           <Separator />
           <div className="grid gap-6">
-            {job.attempts.map((attempt) => (
-              <AttemptCard key={attempt.id} attempt={attempt} />
-            ))}
+            {job.attempts.length > 0 ? (
+              job.attempts.map((attempt) => (
+                <AttemptCard key={attempt.id} attempt={attempt} />
+              ))
+            ) : (
+              <p className="text-center text-sm text-zinc-500">
+                No attempts yet. Waiting for Harbor to start...
+              </p>
+            )}
           </div>
         </section>
       </div>
