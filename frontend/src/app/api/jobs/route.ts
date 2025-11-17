@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { auth } from "@/lib/auth";
 import { createJob } from "@/lib/job-service";
 import { jobQueue } from "@/lib/job-queue";
 import { fetchJobList } from "@/lib/job-data-service";
@@ -10,7 +11,16 @@ validateStartup();
 
 export async function GET() {
   try {
-    const data = await fetchJobList();
+    const session = await auth();
+    if (!session?.user?.id) {
+      return NextResponse.json(
+        { error: "Unauthorized" },
+        { status: 401 }
+      );
+    }
+
+    // Filter jobs by user
+    const data = await fetchJobList(session.user.id);
     return NextResponse.json(data);
   } catch (error) {
     console.error("[API] Error fetching jobs:", error);
@@ -23,6 +33,14 @@ export async function GET() {
 
 export async function POST(request: NextRequest) {
   try {
+    const session = await auth();
+    if (!session?.user?.id) {
+      return NextResponse.json(
+        { error: "Unauthorized" },
+        { status: 401 }
+      );
+    }
+
     const formData = await request.formData();
     const file = formData.get("taskZip") as File | null;
     const runsRequested = parseInt(formData.get("runsRequested") as string) || 10;
@@ -64,6 +82,7 @@ export async function POST(request: NextRequest) {
       taskName,
       zipPath: s3Url, // Store S3 URL (e.g., s3://bucket/tasks/123-file.zip)
       runsRequested,
+      userId: session.user.id,
     });
 
     console.log(`[API] Created job ${job.id}`);

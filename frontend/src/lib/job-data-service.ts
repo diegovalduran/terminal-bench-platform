@@ -1,14 +1,14 @@
-import { inArray } from "drizzle-orm";
+import { eq, inArray } from "drizzle-orm";
 import { db } from "@/db/client";
 import { episodes, jobs } from "@/db/schema";
 import { JobDetailResponse, JobListResponse } from "@/types/runs";
 
-export async function fetchJobList(): Promise<JobListResponse> {
+export async function fetchJobList(userId?: string): Promise<JobListResponse> {
   if (!db) {
     throw new Error("Database not initialized. Please check DATABASE_URL environment variable.");
   }
 
-  const dbJobs = await db
+  let query = db
     .select({
       id: jobs.id,
       taskName: jobs.taskName,
@@ -17,8 +17,14 @@ export async function fetchJobList(): Promise<JobListResponse> {
       runsCompleted: jobs.runsCompleted,
       createdAt: jobs.createdAt,
     })
-    .from(jobs)
-    .orderBy(jobs.createdAt);
+    .from(jobs);
+
+  // Filter by user if userId provided
+  if (userId) {
+    query = query.where(eq(jobs.ownerId, userId)) as typeof query;
+  }
+
+  const dbJobs = await query.orderBy(jobs.createdAt);
 
   return {
     jobs: dbJobs.map((job) => ({

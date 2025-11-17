@@ -6,6 +6,7 @@ export interface CreateJobParams {
   taskName: string;
   zipPath: string;
   runsRequested?: number;
+  userId?: string;
 }
 
 export async function createJob(params: CreateJobParams) {
@@ -21,6 +22,7 @@ export async function createJob(params: CreateJobParams) {
       runsRequested: params.runsRequested ?? 10,
       runsCompleted: 0,
       status: "queued",
+      ownerId: params.userId ?? null,
     })
     .returning();
 

@@ -8,6 +8,13 @@
       "when": 1763406000692,
       "tag": "0000_panoramic_hawkeye",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1763421365227,
+      "tag": "0001_fearless_queen_noir",
+      "breakpoints": true
     }
   ]
 }
