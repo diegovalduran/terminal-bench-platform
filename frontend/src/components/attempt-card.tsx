@@ -14,7 +14,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { formatDistance } from "date-fns";
-import { CheckCircle2, XCircle, Download, Loader2, ChevronDown } from "lucide-react";
+import { CheckCircle2, XCircle, Download, Loader2, ChevronDown, AlertCircle } from "lucide-react";
 import { toast } from "sonner";
 
 const attemptStatusColor: Record<Attempt["status"], string> = {
@@ -160,6 +160,13 @@ export function AttemptCard({ attempt, jobId }: AttemptCardProps) {
                 </DropdownMenuItem>
                 <Separator className="my-1" />
                 <DropdownMenuItem
+                  onClick={() => handleDownload("verifier/ctrf.json", "Test Results (CTRF)")}
+                  disabled={!!downloading}
+                >
+                  <Download className="mr-2 h-4 w-4" />
+                  Test Results (verifier/ctrf.json)
+                </DropdownMenuItem>
+                <DropdownMenuItem
                   onClick={() => handleDownload("verifier/reward.json", "Reward")}
                   disabled={!!downloading}
                 >
@@ -198,7 +205,66 @@ export function AttemptCard({ attempt, jobId }: AttemptCardProps) {
             </AccordionTrigger>
             <AccordionContent className="pt-3">
               <div className="space-y-2">
-                {attempt.rewardSummary && Object.keys(attempt.rewardSummary).length > 0 ? (
+                {/* Display test cases from metadata if available (from ctrf.json) */}
+                {attempt.metadata?.testCases && attempt.metadata.testCases.length > 0 ? (
+                  attempt.metadata.testCases.map((testCase, idx) => {
+                    const isPassed = testCase.status === "passed";
+                    const isFailed = testCase.status === "failed" || testCase.status === "call_failed";
+                    
+                    return (
+                      <Accordion key={`test-${idx}`} type="single" collapsible>
+                        <AccordionItem value={`test-${idx}`} className="border-none">
+                          <div className="rounded-lg border border-zinc-200 bg-white transition-colors hover:bg-zinc-50">
+                            <AccordionTrigger className="px-4 py-3 hover:no-underline">
+                              <div className="flex w-full items-center justify-between pr-4">
+                                <span className="flex-1 text-left font-mono text-sm font-medium text-zinc-800">
+                                  {testCase.name}
+                                </span>
+                                {isPassed ? (
+                                  <div className="flex items-center gap-2 text-emerald-600">
+                                    <CheckCircle2 className="h-5 w-5" />
+                                    <span className="text-sm font-semibold">Passed</span>
+                                  </div>
+                                ) : isFailed ? (
+                                  <div className="flex items-center gap-2 text-rose-600">
+                                    <XCircle className="h-5 w-5" />
+                                    <span className="text-sm font-semibold">Failed</span>
+                                  </div>
+                                ) : (
+                                  <div className="flex items-center gap-2 text-zinc-500">
+                                    <AlertCircle className="h-5 w-5" />
+                                    <span className="text-sm font-semibold capitalize">{testCase.status}</span>
+                                  </div>
+                                )}
+                              </div>
+                            </AccordionTrigger>
+                            {(testCase.trace || testCase.message) && (
+                              <AccordionContent className="px-4 pb-3">
+                                <div className="space-y-2 rounded-lg border border-zinc-200 bg-zinc-50 p-3">
+                                  {testCase.message && (
+                                    <div>
+                                      <p className="mb-1 text-xs font-semibold text-zinc-700">Message:</p>
+                                      <p className="text-sm text-zinc-800">{testCase.message}</p>
+                                    </div>
+                                  )}
+                                  {testCase.trace && (
+                                    <div>
+                                      <p className="mb-1 text-xs font-semibold text-zinc-700">Trace:</p>
+                                      <pre className="max-h-64 overflow-y-auto whitespace-pre-wrap break-words rounded bg-zinc-900 p-3 font-mono text-xs text-zinc-100">
+                                        {testCase.trace}
+                                      </pre>
+                                    </div>
+                                  )}
+                                </div>
+                              </AccordionContent>
+                            )}
+                          </div>
+                        </AccordionItem>
+                      </Accordion>
+                    );
+                  })
+                ) : attempt.rewardSummary && Object.keys(attempt.rewardSummary).length > 0 ? (
+                  // Fallback to rewardSummary if testCases not available
                   Object.entries(attempt.rewardSummary).map(([testName, passed]) => (
                     <div
                       key={testName}

@@ -15,6 +15,13 @@ export interface Episode {
   durationMs?: number;
 }
 
+export interface TestCase {
+  name: string;
+  status: string;
+  trace?: string;
+  message?: string;
+}
+
 export interface Attempt {
   id: string;
   index: number;
@@ -25,6 +32,9 @@ export interface Attempt {
   finishedAt?: string;
   rewardSummary?: Record<string, number>;
   logPath?: string;
+  metadata?: {
+    testCases?: TestCase[];
+  };
   episodes: Episode[];
 }
 

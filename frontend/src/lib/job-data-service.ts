@@ -79,6 +79,7 @@ export async function fetchJobDetail(jobId: string): Promise<JobDetailResponse> 
         finishedAt: attempt.finishedAt?.toISOString(),
         rewardSummary: attempt.rewardSummary ?? undefined,
         logPath: attempt.logPath ?? undefined,
+        metadata: attempt.metadata ? (attempt.metadata as { testCases?: Array<{ name: string; status: string; trace?: string; message?: string }> }) : undefined,
         episodes: episodeRecords
           .filter((episode) => episode.attemptId === attempt.id)
           .map((episode) => ({
