@@ -70,8 +70,10 @@ The worker requires the same environment variables as the Next.js application:
 - `S3_ACCESS_KEY_ID` - AWS access key (required)
 - `S3_SECRET_ACCESS_KEY` - AWS secret key (required)
 - `OPENAI_API_KEY` - OpenAI API key (optional, for Terminus 2 agent)
+- `HARBOR_MODEL` - LLM model to use (default: `gpt-5-mini`)
 - `WORKER_POLL_INTERVAL_MS` - Poll interval in milliseconds (default: 5000)
-- `MAX_CONCURRENT_ATTEMPTS_PER_JOB` - Max parallel attempts per job (default: 10)
+- `MAX_CONCURRENT_ATTEMPTS_PER_JOB` - Max parallel attempts per job (default: 10 for premium models, 5 for cheaper models like `gpt-4o-mini`)
+- `ATTEMPT_STAGGER_DELAY_MS` - Delay between starting attempts in milliseconds (default: 2000ms) to avoid rate limits
 
 ## Graceful Shutdown
 
@@ -135,6 +137,18 @@ The worker doesn't expose an HTTP endpoint, but you can monitor it through:
 - PM2 will automatically restart if memory exceeds 2GB
 - Check for memory leaks in job processing
 - Consider reducing `MAX_CONCURRENT_ATTEMPTS_PER_JOB` if needed
+
+### Rate limit errors
+
+The worker automatically detects and handles OpenAI rate limit errors:
+
+- **Automatic detection**: Rate limit errors are detected in Harbor stderr and attempts are marked as failed
+- **Reduced concurrency**: Cheaper models (e.g., `gpt-4o-mini`, `gpt-3.5`) automatically use lower concurrency (5 instead of 10)
+- **Staggered starts**: Attempts start with a delay (`ATTEMPT_STAGGER_DELAY_MS`) to spread API calls over time
+- **If you still hit rate limits**:
+  - Increase `ATTEMPT_STAGGER_DELAY_MS` (e.g., 5000ms = 5 seconds between starts)
+  - Reduce `MAX_CONCURRENT_ATTEMPTS_PER_JOB` (e.g., 3 for very strict limits)
+  - Consider upgrading to a premium OpenAI account with higher rate limits
 
 ## Deployment
 

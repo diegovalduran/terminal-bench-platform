@@ -1,6 +1,6 @@
 import { spawn, ChildProcess, exec } from "child_process";
 import { promisify } from "util";
-import { mkdir, readFile, readdir, stat, writeFile, unlink, rm } from "fs/promises";
+import { mkdir, readFile, readdir, stat, writeFile, unlink, rm, appendFile } from "fs/promises";
 import { join } from "path";
 import extract from "extract-zip";
 
@@ -8,7 +8,7 @@ const execAsync = promisify(exec);
 import { QueuedJob } from "../types/runs.js";
 import { updateJobStatus, incrementJobProgress } from "./job-service.js";
 import { createAttempt, updateAttempt, createEpisode } from "./attempt-service.js";
-import { downloadFile, uploadDirectory } from "./s3-service.js";
+import { downloadFile, uploadDirectory, uploadFile } from "./s3-service.js";
 import { Semaphore } from "./semaphore.js";
 
 // Process registry for tracking and cancelling jobs
@@ -270,7 +270,7 @@ function runHarborCommand(
   command: string,
   args: string[],
   jobId: string,
-  options: { cwd: string; timeout: number }
+  options: { cwd: string; timeout: number; logDir?: string; attemptIndex?: number }
 ): Promise<{ stdout: string; stderr: string }> {
   return new Promise((resolve, reject) => {
     // Prepare environment variables for Harbor process
@@ -301,13 +301,87 @@ function runHarborCommand(
 
     let stdout = '';
     let stderr = '';
+    
+    // Set up log streaming if logDir is provided
+    let stdoutLogPath: string | null = null;
+    let stderrLogPath: string | null = null;
+    let lastUploadTime = Date.now();
+    const UPLOAD_INTERVAL_MS = 30000; // Upload logs every 30 seconds
+    
+    if (options.logDir && options.attemptIndex !== undefined) {
+      stdoutLogPath = join(options.logDir, `harbor-stdout.log`);
+      stderrLogPath = join(options.logDir, `harbor-stderr.log`);
+      
+      // Initialize log files
+      writeFile(stdoutLogPath, '').catch(() => {});
+      writeFile(stderrLogPath, '').catch(() => {});
+    }
+    
+    // Helper to upload logs periodically
+    const maybeUploadLogs = async () => {
+      if (!stdoutLogPath || !stderrLogPath || options.attemptIndex === undefined) return;
+      
+      const now = Date.now();
+      if (now - lastUploadTime < UPLOAD_INTERVAL_MS) return;
+      lastUploadTime = now;
+      
+      try {
+        const s3Prefix = `results/${jobId}/attempt-${options.attemptIndex}/logs/`;
+        
+        // Upload stdout log
+        try {
+          const stdoutContent = await readFile(stdoutLogPath, "utf-8").catch(() => '');
+          if (stdoutContent) {
+            await uploadFile(`${s3Prefix}harbor-stdout.log`, Buffer.from(stdoutContent), "text/plain");
+          }
+        } catch (e) {
+          // Ignore upload errors - logs will be uploaded at the end anyway
+        }
+        
+        // Upload stderr log
+        try {
+          const stderrContent = await readFile(stderrLogPath, "utf-8").catch(() => '');
+          if (stderrContent) {
+            await uploadFile(`${s3Prefix}harbor-stderr.log`, Buffer.from(stderrContent), "text/plain");
+          }
+        } catch (e) {
+          // Ignore upload errors
+        }
+      } catch (error) {
+        // Ignore periodic upload errors - logs will be uploaded at the end
+      }
+    };
 
-    child.stdout?.on('data', (data) => {
-      stdout += data.toString();
+    child.stdout?.on('data', async (data) => {
+      const text = data.toString();
+      stdout += text;
+      
+      // Append to log file if streaming is enabled
+      if (stdoutLogPath) {
+        try {
+          await appendFile(stdoutLogPath, text);
+          // Periodically upload logs (non-blocking)
+          maybeUploadLogs().catch(() => {});
+        } catch (error) {
+          // Ignore log file errors
+        }
+      }
     });
 
-    child.stderr?.on('data', (data) => {
-      stderr += data.toString();
+    child.stderr?.on('data', async (data) => {
+      const text = data.toString();
+      stderr += text;
+      
+      // Append to log file if streaming is enabled
+      if (stderrLogPath) {
+        try {
+          await appendFile(stderrLogPath, text);
+          // Periodically upload logs (non-blocking)
+          maybeUploadLogs().catch(() => {});
+        } catch (error) {
+          // Ignore log file errors
+        }
+      }
     });
 
     const timeout = setTimeout(() => {
@@ -352,9 +426,38 @@ function runHarborCommand(
       }
     }, 2000); // Check every 2 seconds
 
-    child.on('exit', (code, signal) => {
+    child.on('exit', async (code, signal) => {
       clearTimeout(timeout);
       clearInterval(cancellationCheckInterval);
+      
+      // Final upload of logs if streaming was enabled
+      if (stdoutLogPath && stderrLogPath && options.attemptIndex !== undefined) {
+        try {
+          const s3Prefix = `results/${jobId}/attempt-${options.attemptIndex}/logs/`;
+          
+          // Upload final stdout log
+          try {
+            const stdoutContent = await readFile(stdoutLogPath, "utf-8").catch(() => '');
+            if (stdoutContent) {
+              await uploadFile(`${s3Prefix}harbor-stdout.log`, Buffer.from(stdoutContent), "text/plain");
+            }
+          } catch (e) {
+            // Ignore upload errors
+          }
+          
+          // Upload final stderr log
+          try {
+            const stderrContent = await readFile(stderrLogPath, "utf-8").catch(() => '');
+            if (stderrContent) {
+              await uploadFile(`${s3Prefix}harbor-stderr.log`, Buffer.from(stderrContent), "text/plain");
+            }
+          } catch (e) {
+            // Ignore upload errors
+          }
+        } catch (error) {
+          // Ignore final upload errors
+        }
+      }
       
       if (signal === 'SIGTERM' || signal === 'SIGKILL') {
         reject(new Error('Job cancelled'));
@@ -443,15 +546,209 @@ async function parseTrajectory(trialDir: string): Promise<{
   }>;
   totalDurationMs: number;
 }> {
-  // Try oracle.txt first (for Oracle agent), then trajectory.json (for real LLM agents)
+  // Check trajectory.json FIRST (Terminus 2 and other LLM agents)
+  // This takes priority because it's more structured and accurate
+  // Only fall back to oracle.txt if trajectory.json doesn't exist
   const oraclePath = join(trialDir, "agent", "oracle.txt");
   const trajectoryPath = join(trialDir, "agent", "trajectory.json");
   
   try {
-    // Check for Oracle agent output first
+    // Try trajectory.json FIRST for real LLM agents (Terminus 2, etc.)
+    const trajectoryContent = await readFile(trajectoryPath, "utf-8").catch(() => null);
+    
+    if (trajectoryContent) {
+      // We have trajectory.json, parse it (this is the primary format for Terminus 2)
+      // Skip oracle.txt check since trajectory.json takes priority
+      const trajectory: Trajectory = JSON.parse(trajectoryContent);
+      
+      const episodes: Array<{
+        stateAnalysis: string;
+        explanation: string;
+        commands: Array<{ command: string; output: string; exitCode?: number }>;
+      }> = [];
+      
+      // Check if this is ATIF format (Terminus 2) - has schema_version and steps with source/message
+      const isATIF = trajectory.schema_version && trajectory.steps && Array.isArray(trajectory.steps);
+      
+      if (isATIF && trajectory.steps) {
+        // Parse ATIF format (Terminus 2)
+        // Group steps by agent episodes (each agent step with tool_calls is an episode)
+        let currentEpisode: {
+          stateAnalysis: string;
+          explanation: string;
+          commands: Array<{ command: string; output: string; exitCode?: number }>;
+        } | null = null;
+        
+        for (const step of trajectory.steps) {
+          // Agent steps contain the analysis/plan and commands
+          if (step.source === "agent" && step.message) {
+            // Extract analysis and plan from message
+            // Message format: "Analysis: ...\nPlan: ..."
+            const messageLines = step.message.split('\n');
+            let analysis = "";
+            let plan = "";
+            let inAnalysis = false;
+            let inPlan = false;
+            
+            for (const line of messageLines) {
+              if (line.startsWith("Analysis:")) {
+                inAnalysis = true;
+                inPlan = false;
+                analysis = line.replace(/^Analysis:\s*/, "");
+              } else if (line.startsWith("Plan:")) {
+                inPlan = true;
+                inAnalysis = false;
+                plan = line.replace(/^Plan:\s*/, "");
+              } else if (inAnalysis) {
+                analysis += "\n" + line;
+              } else if (inPlan) {
+                plan += "\n" + line;
+              }
+            }
+            
+            // If no explicit Analysis/Plan, use the whole message as explanation
+            const explanation = plan || analysis || step.message;
+            const stateAnalysis = analysis || "Agent analysis";
+            
+            // Extract commands from tool_calls
+            const commands: Array<{ command: string; output: string; exitCode?: number }> = [];
+            if (step.tool_calls && Array.isArray(step.tool_calls)) {
+              for (const toolCall of step.tool_calls) {
+                if (toolCall.function_name === "bash_command" && toolCall.arguments?.keystrokes) {
+                  commands.push({
+                    command: toolCall.arguments.keystrokes.trim(),
+                    output: "", // Will be filled from next observation step
+                    exitCode: undefined,
+                  });
+                }
+              }
+            }
+            
+            // Create new episode
+            currentEpisode = {
+              stateAnalysis: stateAnalysis.trim() || "Agent analysis",
+              explanation: explanation.trim() || "Agent plan",
+              commands,
+            };
+          }
+          // Observation steps contain terminal output
+          // Check for ATIF observation structure (nested object with results array)
+          else if (step.source === "system" && step.observation && typeof step.observation === "object" && !Array.isArray(step.observation) && "results" in step.observation) {
+            // Get terminal output from observation
+            const obs = step.observation as { results?: Array<{ content?: string }> };
+            const terminalOutput = obs.results
+              ?.map(r => r.content || "")
+              .join("\n")
+              .trim() || "";
+            
+            // If we have a current episode, add output to the last command
+            if (currentEpisode && currentEpisode.commands.length > 0) {
+              const lastCommand = currentEpisode.commands[currentEpisode.commands.length - 1];
+              if (!lastCommand.output) {
+                lastCommand.output = terminalOutput;
+              } else {
+                // If output already exists, append (multiple observations per command)
+                lastCommand.output += "\n" + terminalOutput;
+              }
+            } else if (terminalOutput) {
+              // If no current episode but we have output, create a basic episode
+              currentEpisode = {
+                stateAnalysis: "Terminal output",
+                explanation: "System observation",
+                commands: [{
+                  command: "",
+                  output: terminalOutput,
+                  exitCode: undefined,
+                }],
+              };
+            }
+          }
+          
+          // If we have a complete episode (with commands and output), add it
+          if (currentEpisode && currentEpisode.commands.length > 0) {
+            // Check if this episode is complete (has output for at least one command)
+            const hasOutput = currentEpisode.commands.some(c => c.output);
+            if (hasOutput || step.source === "agent") {
+              // Only add episode if it has meaningful content
+              if (currentEpisode.stateAnalysis || currentEpisode.explanation || currentEpisode.commands.length > 0) {
+                episodes.push(currentEpisode);
+                currentEpisode = null; // Reset for next episode
+              }
+            }
+          }
+        }
+        
+        // Add final episode if it exists
+        if (currentEpisode && (currentEpisode.commands.length > 0 || currentEpisode.stateAnalysis || currentEpisode.explanation)) {
+          episodes.push(currentEpisode);
+        }
+        
+        // Return early since we successfully parsed trajectory.json
+        return {
+          episodes: episodes.length > 0 ? episodes : [{
+            stateAnalysis: "No detailed trajectory available",
+            explanation: "Agent completed execution",
+            commands: [],
+          }],
+          totalDurationMs: 0,
+        };
+      }
+      // Legacy format: steps-based trajectory (simple format)
+      else if (trajectory.steps && Array.isArray(trajectory.steps)) {
+        for (const step of trajectory.steps) {
+          const commands: Array<{ command: string; output: string; exitCode?: number }> = [];
+          
+          if (step.command) {
+            commands.push({
+              command: step.command,
+              output: step.output || "",
+              exitCode: step.exit_code,
+            });
+          }
+          
+          // Handle observation (can be string or object)
+          const observationText = typeof step.observation === "string" 
+            ? step.observation 
+            : "No observation recorded";
+          
+          episodes.push({
+            stateAnalysis: observationText,
+            explanation: step.thought || step.action || "Agent action",
+            commands,
+          });
+        }
+      }
+      // Legacy format: action-based trajectory
+      else if (trajectory.actions && Array.isArray(trajectory.actions)) {
+        for (const action of trajectory.actions) {
+          episodes.push({
+            stateAnalysis: "Command execution",
+            explanation: `Executed: ${action.command}`,
+            commands: [{
+              command: action.command,
+              output: action.output || "",
+              exitCode: action.exit_code,
+            }],
+          });
+        }
+      }
+      
+      return {
+        episodes: episodes.length > 0 ? episodes : [{
+          stateAnalysis: "No detailed trajectory available",
+          explanation: "Agent completed execution",
+          commands: [],
+        }],
+        totalDurationMs: 0,
+      };
+    }
+    
+    // Only check oracle.txt if trajectory.json doesn't exist
+    // This ensures Terminus 2 output takes priority over any leftover oracle.txt files
     const oracleContent = await readFile(oraclePath, "utf-8").catch(() => null);
-    if (oracleContent) {
-      console.log(`[Worker] Found oracle.txt, parsing Oracle agent output`);
+    if (oracleContent && oracleContent.trim().length > 0) {
+      // Only treat as Oracle if file has actual content (not empty)
+      console.log(`[Worker] Found oracle.txt (no trajectory.json), parsing Oracle agent output`);
       return {
         episodes: [{
           stateAnalysis: "Oracle agent execution",
@@ -466,189 +763,12 @@ async function parseTrajectory(trialDir: string): Promise<{
       };
     }
     
-    // Try trajectory.json for real LLM agents (with error handling)
-    const trajectoryContent = await readFile(trajectoryPath, "utf-8").catch(() => null);
-    if (!trajectoryContent) {
-      // Neither oracle.txt nor trajectory.json exists
-      console.log(`[Worker] No trajectory file found (neither oracle.txt nor trajectory.json)`);
-      return {
-        episodes: [{
-          stateAnalysis: "No trajectory available",
-          explanation: "Agent output files not found",
-          commands: [],
-        }],
-        totalDurationMs: 0,
-      };
-    }
-    
-    const trajectory: Trajectory = JSON.parse(trajectoryContent);
-    
-    const episodes: Array<{
-      stateAnalysis: string;
-      explanation: string;
-      commands: Array<{ command: string; output: string; exitCode?: number }>;
-    }> = [];
-    
-    // Check if this is ATIF format (Terminus 2) - has schema_version and steps with source/message
-    const isATIF = trajectory.schema_version && trajectory.steps && Array.isArray(trajectory.steps);
-    
-    if (isATIF && trajectory.steps) {
-      // Parse ATIF format (Terminus 2)
-      // Group steps by agent episodes (each agent step with tool_calls is an episode)
-      let currentEpisode: {
-        stateAnalysis: string;
-        explanation: string;
-        commands: Array<{ command: string; output: string; exitCode?: number }>;
-      } | null = null;
-      
-      for (const step of trajectory.steps) {
-        // Agent steps contain the analysis/plan and commands
-        if (step.source === "agent" && step.message) {
-          // Extract analysis and plan from message
-          // Message format: "Analysis: ...\nPlan: ..."
-          const messageLines = step.message.split('\n');
-          let analysis = "";
-          let plan = "";
-          let inAnalysis = false;
-          let inPlan = false;
-          
-          for (const line of messageLines) {
-            if (line.startsWith("Analysis:")) {
-              inAnalysis = true;
-              inPlan = false;
-              analysis = line.replace(/^Analysis:\s*/, "");
-            } else if (line.startsWith("Plan:")) {
-              inPlan = true;
-              inAnalysis = false;
-              plan = line.replace(/^Plan:\s*/, "");
-            } else if (inAnalysis) {
-              analysis += "\n" + line;
-            } else if (inPlan) {
-              plan += "\n" + line;
-            }
-          }
-          
-          // If no explicit Analysis/Plan, use the whole message as explanation
-          const explanation = plan || analysis || step.message;
-          const stateAnalysis = analysis || "Agent analysis";
-          
-          // Extract commands from tool_calls
-          const commands: Array<{ command: string; output: string; exitCode?: number }> = [];
-          if (step.tool_calls && Array.isArray(step.tool_calls)) {
-            for (const toolCall of step.tool_calls) {
-              if (toolCall.function_name === "bash_command" && toolCall.arguments?.keystrokes) {
-                commands.push({
-                  command: toolCall.arguments.keystrokes.trim(),
-                  output: "", // Will be filled from next observation step
-                  exitCode: undefined,
-                });
-              }
-            }
-          }
-          
-          // Create new episode
-          currentEpisode = {
-            stateAnalysis: stateAnalysis.trim() || "Agent analysis",
-            explanation: explanation.trim() || "Agent plan",
-            commands,
-          };
-        }
-        // Observation steps contain terminal output
-        // Check for ATIF observation structure (nested object with results array)
-        else if (step.source === "system" && step.observation && typeof step.observation === "object" && !Array.isArray(step.observation) && "results" in step.observation) {
-          // Get terminal output from observation
-          const obs = step.observation as { results?: Array<{ content?: string }> };
-          const terminalOutput = obs.results
-            ?.map(r => r.content || "")
-            .join("\n")
-            .trim() || "";
-          
-          // If we have a current episode, add output to the last command
-          if (currentEpisode && currentEpisode.commands.length > 0) {
-            const lastCommand = currentEpisode.commands[currentEpisode.commands.length - 1];
-            if (!lastCommand.output) {
-              lastCommand.output = terminalOutput;
-            } else {
-              // If output already exists, append (multiple observations per command)
-              lastCommand.output += "\n" + terminalOutput;
-            }
-          } else if (terminalOutput) {
-            // If no current episode but we have output, create a basic episode
-            currentEpisode = {
-              stateAnalysis: "Terminal output",
-              explanation: "System observation",
-              commands: [{
-                command: "",
-                output: terminalOutput,
-                exitCode: undefined,
-              }],
-            };
-          }
-        }
-        
-        // If we have a complete episode (with commands and output), add it
-        if (currentEpisode && currentEpisode.commands.length > 0) {
-          // Check if this episode is complete (has output for at least one command)
-          const hasOutput = currentEpisode.commands.some(c => c.output);
-          if (hasOutput || step.source === "agent") {
-            // Only add episode if it has meaningful content
-            if (currentEpisode.stateAnalysis || currentEpisode.explanation || currentEpisode.commands.length > 0) {
-              episodes.push(currentEpisode);
-              currentEpisode = null; // Reset for next episode
-            }
-          }
-        }
-      }
-      
-      // Add final episode if it exists
-      if (currentEpisode && (currentEpisode.commands.length > 0 || currentEpisode.stateAnalysis || currentEpisode.explanation)) {
-        episodes.push(currentEpisode);
-      }
-    }
-    // Legacy format: steps-based trajectory (simple format)
-    else if (trajectory.steps && Array.isArray(trajectory.steps)) {
-      for (const step of trajectory.steps) {
-        const commands: Array<{ command: string; output: string; exitCode?: number }> = [];
-        
-        if (step.command) {
-          commands.push({
-            command: step.command,
-            output: step.output || "",
-            exitCode: step.exit_code,
-          });
-        }
-        
-        // Handle observation (can be string or object)
-        const observationText = typeof step.observation === "string" 
-          ? step.observation 
-          : "No observation recorded";
-        
-        episodes.push({
-          stateAnalysis: observationText,
-          explanation: step.thought || step.action || "Agent action",
-          commands,
-        });
-      }
-    }
-    // Legacy format: action-based trajectory
-    else if (trajectory.actions && Array.isArray(trajectory.actions)) {
-      for (const action of trajectory.actions) {
-        episodes.push({
-          stateAnalysis: "Command execution",
-          explanation: `Executed: ${action.command}`,
-          commands: [{
-            command: action.command,
-            output: action.output || "",
-            exitCode: action.exit_code,
-          }],
-        });
-      }
-    }
-    
+    // Neither trajectory.json nor oracle.txt exists (or oracle.txt is empty)
+    console.log(`[Worker] No trajectory file found (neither trajectory.json nor valid oracle.txt)`);
     return {
-      episodes: episodes.length > 0 ? episodes : [{
-        stateAnalysis: "No detailed trajectory available",
-        explanation: "Agent completed execution",
+      episodes: [{
+        stateAnalysis: "No trajectory available",
+        explanation: "Agent output files not found",
         commands: [],
       }],
       totalDurationMs: 0,
@@ -693,6 +813,144 @@ async function findTaskDirectory(baseDir: string): Promise<string> {
   }
   
   throw new Error("Could not find task.toml in the extracted archive. Please ensure the zip contains a valid Terminal-Bench task.");
+}
+
+/**
+ * Attempts to recover partial data from a failed attempt
+ * This allows users to see what was done before the error occurred
+ */
+async function recoverPartialData(
+  attemptId: string,
+  attemptOutputDir: string,
+  attemptIndex: number,
+  jobId: string
+): Promise<{
+  episodesFound: number;
+  testsPassed: number;
+  testsTotal: number;
+  testCases: Array<{ name: string; status: string; trace?: string; message?: string }>;
+  s3Url: string | null;
+}> {
+  const result = {
+    episodesFound: 0,
+    testsPassed: 0,
+    testsTotal: 0,
+    testCases: [] as Array<{ name: string; status: string; trace?: string; message?: string }>,
+    s3Url: null as string | null,
+  };
+
+  try {
+    // Try to find the latest run directory (even if Harbor didn't complete)
+    const latestRunDir = await findLatestHarborOutput(attemptOutputDir).catch(() => null);
+    if (!latestRunDir) {
+      logImmediate('⚠️', `No Harbor output directory found for partial data recovery`);
+      return result;
+    }
+
+    const trialDir = await findTrialDirectory(latestRunDir).catch(() => null);
+    if (!trialDir) {
+      logImmediate('⚠️', `No trial directory found for partial data recovery`);
+      return result;
+    }
+
+    logImmediate('🔍', `Attempting to recover partial data from ${trialDir}`);
+
+    // Try to parse partial trajectory.json
+    try {
+      const { episodes } = await parseTrajectory(trialDir);
+      if (episodes.length > 0) {
+        logImmediate('📚', `Found ${episodes.length} partial episodes in trajectory`);
+        
+        // Create episodes from partial trajectory
+        for (let i = 0; i < episodes.length; i++) {
+          try {
+            await createEpisode({
+              attemptId,
+              index: i,
+              stateAnalysis: episodes[i].stateAnalysis,
+              explanation: episodes[i].explanation,
+              commands: episodes[i].commands,
+              durationMs: undefined,
+            });
+            result.episodesFound++;
+          } catch (episodeError) {
+            // Ignore individual episode creation errors
+            logImmediate('⚠️', `Failed to create episode ${i}: ${episodeError instanceof Error ? episodeError.message : 'Unknown error'}`);
+          }
+        }
+      }
+    } catch (trajectoryError) {
+      logImmediate('⚠️', `Failed to parse trajectory: ${trajectoryError instanceof Error ? trajectoryError.message : 'Unknown error'}`);
+    }
+
+    // Try to parse partial test results
+    try {
+      // Try ctrf.json first (structured format)
+      const ctrfPath = join(trialDir, "verifier", "ctrf.json");
+      const ctrfContent = await readFile(ctrfPath, "utf-8").catch(() => null);
+
+      if (ctrfContent) {
+        try {
+          const ctrf = JSON.parse(ctrfContent);
+          if (ctrf.results?.summary) {
+            result.testsPassed = ctrf.results.summary.passed || 0;
+            result.testsTotal = ctrf.results.summary.tests || 0;
+          }
+          if (ctrf.results?.tests && Array.isArray(ctrf.results.tests)) {
+            result.testCases = ctrf.results.tests.map((test: any) => ({
+              name: test.name || "Unknown test",
+              status: test.status || "unknown",
+              trace: test.trace,
+              message: test.message,
+            }));
+          }
+          logImmediate('🧪', `Found partial test results: ${result.testsPassed}/${result.testsTotal} passed`);
+        } catch (parseError) {
+          // Ignore parse errors
+        }
+      }
+
+      // Fallback to result.json if ctrf.json not available
+      if (result.testsTotal === 0) {
+        try {
+          const resultPath = join(trialDir, "result.json");
+          const resultContent = await readFile(resultPath, "utf-8");
+          const harborResult: HarborTrialResult = JSON.parse(resultContent);
+          const rewards = harborResult.verifier_result?.rewards || {};
+          result.testsPassed = Object.values(rewards).filter((r) => r === 1).length;
+          result.testsTotal = Object.keys(rewards).length || 0;
+          if (result.testsTotal > 0) {
+            logImmediate('🧪', `Found partial test results from result.json: ${result.testsPassed}/${result.testsTotal} passed`);
+          }
+        } catch (resultError) {
+          // Ignore parse errors
+        }
+      }
+    } catch (testError) {
+      logImmediate('⚠️', `Failed to parse test results: ${testError instanceof Error ? testError.message : 'Unknown error'}`);
+    }
+
+    // Try to upload whatever files exist to S3
+    try {
+      const s3Prefix = `results/${jobId}/attempt-${attemptIndex}/`;
+      await uploadDirectory(trialDir, s3Prefix);
+      result.s3Url = `s3://${process.env.S3_BUCKET}/${s3Prefix}`;
+      logImmediate('☁️', `Uploaded partial files to S3: ${result.s3Url}`);
+    } catch (uploadError) {
+      logImmediate('⚠️', `Failed to upload partial files: ${uploadError instanceof Error ? uploadError.message : 'Unknown error'}`);
+    }
+
+    if (result.episodesFound > 0 || result.testsTotal > 0 || result.s3Url) {
+      logImmediate('✅', `Partial data recovery successful: ${result.episodesFound} episodes, ${result.testsPassed}/${result.testsTotal} tests, S3: ${result.s3Url ? 'yes' : 'no'}`);
+    } else {
+      logImmediate('ℹ️', `No partial data found to recover`);
+    }
+  } catch (error) {
+    // Don't throw - recovery is best effort
+    logImmediate('⚠️', `Partial data recovery failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
+  }
+
+  return result;
 }
 
 async function findLatestHarborOutput(outputDir: string): Promise<string> {
@@ -768,7 +1026,17 @@ export async function processJob(job: QueuedJob) {
       throw new Error("Job cancelled before starting");
     }
     
-    // Create working directories
+    // Clean up any previous run data for this job (fresh start)
+    logImmediate('🧹', `Cleaning up previous run data for job ${job.jobId.slice(0, 8)}...`);
+    try {
+      await rm(workDir, { recursive: true, force: true });
+      logImmediate('✅', `Cleaned up previous work directory`);
+    } catch (error) {
+      // Ignore errors if directory doesn't exist (first run)
+      logImmediate('ℹ️', `No previous work directory to clean (first run)`);
+    }
+    
+    // Create working directories (fresh)
     logImmediate('📁', `Creating working directories...`);
     await mkdir(workDir, { recursive: true });
     await mkdir(taskDir, { recursive: true });
@@ -796,10 +1064,23 @@ export async function processJob(job: QueuedJob) {
     const actualTaskDir = await findTaskDirectory(taskDir);
     logImmediate('🔍', `Found task directory: ${actualTaskDir}`);
     
-    // Create semaphore to limit concurrent attempts (max 10)
-    const maxConcurrentAttempts = parseInt(process.env.MAX_CONCURRENT_ATTEMPTS_PER_JOB || "10", 10);
+    // Determine model for concurrency adjustment
+    const hasApiKey = process.env.OPENAI_API_KEY && process.env.OPENAI_API_KEY.length > 0;
+    const model = process.env.HARBOR_MODEL || 'gpt-5-mini';
+    
+    // Adjust concurrency based on model (cheaper models have stricter rate limits)
+    const isCheapModel = model.includes('gpt-4o-mini') || model.includes('gpt-3.5');
+    const defaultConcurrency = isCheapModel ? 5 : 10; // Lower concurrency for cheaper models
+    const maxConcurrentAttempts = parseInt(process.env.MAX_CONCURRENT_ATTEMPTS_PER_JOB || String(defaultConcurrency), 10);
     const semaphore = new Semaphore(maxConcurrentAttempts);
+    
+    // Stagger delay between attempts (in milliseconds) to spread out API calls
+    const staggerDelayMs = parseInt(process.env.ATTEMPT_STAGGER_DELAY_MS || "2000", 10); // Default 2 seconds
+    
     logImmediate('⚡', `Running ${job.runsRequested} attempts with max ${maxConcurrentAttempts} concurrent`);
+    if (hasApiKey && isCheapModel) {
+      logImmediate('⏱️', `Using reduced concurrency (${maxConcurrentAttempts}) and ${staggerDelayMs}ms stagger for ${model} to avoid rate limits`);
+    }
     
     // Process a single attempt
     const processAttempt = async (attemptIndex: number) => {
@@ -841,17 +1122,13 @@ export async function processJob(job: QueuedJob) {
           }
         
         const attemptStartTime = Date.now();
+        const attemptOutputDir = join(outputDir, `attempt-${attemptIndex}`);
         
         try {
-          const attemptOutputDir = join(outputDir, `attempt-${attemptIndex}`);
           await mkdir(attemptOutputDir, { recursive: true });
           
-          // Determine which agent to use based on environment
-          const hasApiKey = process.env.OPENAI_API_KEY && process.env.OPENAI_API_KEY.length > 0;
+          // Use model and hasApiKey from outer scope (already determined)
           const useTerminus2 = hasApiKey;
-          
-          // Get model from environment variable (default to gpt-4o-mini for cost savings)
-          const model = process.env.HARBOR_MODEL || 'gpt-4o-mini';
           const isGPT5 = model.includes('gpt-5');
           
           if (useTerminus2) {
@@ -884,11 +1161,46 @@ export async function processJob(job: QueuedJob) {
             {
               cwd: process.cwd(),
               timeout: 15 * 60 * 1000, // 15 minutes
+              logDir: attemptOutputDir, // Enable log streaming
+              attemptIndex: attemptIndex, // For S3 path
             }
           );
           
           if (stdout) logImmediate('📝', `Harbor stdout (first 200 chars): ${stdout.slice(0, 200)}...`);
           if (stderr) logImmediate('⚠️', `Harbor stderr (first 200 chars): ${stderr.slice(0, 200)}...`);
+          
+          // Check for rate limit errors in stderr
+          const isRateLimitError = stderr && (
+            stderr.includes('RateLimitError') ||
+            stderr.includes('Rate limit reached') ||
+            stderr.includes('rate limit') ||
+            stderr.includes('429') // HTTP 429 status code
+          );
+          
+          if (isRateLimitError) {
+            logImmediate('🚫', `Rate limit error detected for Attempt ${attemptIndex + 1} - marking as failed`);
+            const attemptDuration = Date.now() - attemptStartTime;
+            
+            // Mark attempt as failed with rate limit error
+            await updateAttempt(attempt.id, {
+              status: "failed",
+              finishedAt: new Date(),
+              metadata: {
+                error: "Rate limit exceeded - too many concurrent API calls to OpenAI",
+                errorType: "RateLimitError",
+                errorDetails: stderr.slice(0, 500), // Store first 500 chars of error
+              },
+            });
+            
+            const runningJob = runningJobs.get(job.jobId);
+            if (runningJob) {
+              runningJob.attemptIds.delete(attempt.id);
+            }
+            
+            logImmediate('❌', `Attempt ${attemptIndex + 1} failed due to rate limit after ${(attemptDuration / 1000).toFixed(1)}s`);
+            // Don't increment progress for rate limit failures
+            return;
+          }
           
           // Parse Harbor output using helper functions
           const latestRunDir = await findLatestHarborOutput(attemptOutputDir);
@@ -1045,11 +1357,48 @@ export async function processJob(job: QueuedJob) {
           // Check if this failure was due to cancellation
           const wasCancelled = errorMessage.includes("cancelled") || await isJobCancelled(job.jobId);
           
-          // Update attempt with failure status
-          await updateAttempt(attempt.id, {
+          // Try to recover partial data before marking as failed
+          // This allows users to see what was done before the error
+          let partialData = {
+            episodesFound: 0,
+            testsPassed: 0,
+            testsTotal: 0,
+            testCases: [] as Array<{ name: string; status: string; trace?: string; message?: string }>,
+            s3Url: null as string | null,
+          };
+
+          try {
+            partialData = await recoverPartialData(attempt.id, attemptOutputDir, attemptIndex, job.jobId);
+          } catch (recoveryError) {
+            // Don't fail the attempt if recovery fails - it's best effort
+            logImmediate('⚠️', `Partial data recovery encountered an error: ${recoveryError instanceof Error ? recoveryError.message : 'Unknown error'}`);
+          }
+          
+          // Prepare attempt update with partial data
+          const attemptUpdates: Parameters<typeof updateAttempt>[1] = {
             status: "failed",
             finishedAt: new Date(),
-          });
+            testsPassed: partialData.testsPassed,
+            testsTotal: partialData.testsTotal,
+            logPath: partialData.s3Url || undefined,
+          };
+
+          // Add test cases to metadata if available
+          if (partialData.testCases.length > 0) {
+            attemptUpdates.metadata = { testCases: partialData.testCases };
+          }
+
+          // Add error information to metadata
+          if (!attemptUpdates.metadata) {
+            attemptUpdates.metadata = {};
+          }
+          attemptUpdates.metadata.error = errorMessage;
+          attemptUpdates.metadata.errorType = errorMessage.includes("timed out") ? "TimeoutError" : 
+                                             errorMessage.includes("cancelled") ? "CancellationError" : 
+                                             "ExecutionError";
+
+          // Update attempt with failure status and partial data
+          await updateAttempt(attempt.id, attemptUpdates);
           
           // Remove from tracked attempts
           const runningJob = runningJobs.get(job.jobId);
@@ -1057,14 +1406,16 @@ export async function processJob(job: QueuedJob) {
             runningJob.attemptIds.delete(attempt.id);
           }
           
-          // Create a fallback episode explaining the error
-          await createEpisode({
-            attemptId: attempt.id,
-            index: 0,
-            stateAnalysis: "Attempt failed during execution",
-            explanation: `Error: ${errorMessage}`,
-            commands: [],
-          });
+          // Only create fallback episode if we didn't recover any episodes
+          if (partialData.episodesFound === 0) {
+            await createEpisode({
+              attemptId: attempt.id,
+              index: 0,
+              stateAnalysis: "Attempt failed during execution",
+              explanation: `Error: ${errorMessage}${partialData.s3Url ? '\n\nPartial logs available for download.' : ''}`,
+              commands: [],
+            });
+          }
           
           // Only increment progress if NOT cancelled (cancelled jobs should show 0% completion)
           if (!wasCancelled) {
@@ -1077,10 +1428,27 @@ export async function processJob(job: QueuedJob) {
       }
     };
     
-    // Run all attempts in parallel (limited by semaphore)
-    const attemptPromises = Array.from({ length: job.runsRequested }, (_, i) =>
-      processAttempt(i)
-    );
+    // Run all attempts with staggered starts to avoid rate limits
+    // Each attempt starts with a delay to spread out API calls over time
+    const attemptPromises = Array.from({ length: job.runsRequested }, (_, i) => {
+      // Stagger start times: attempt 0 starts immediately, attempt 1 after staggerDelayMs, etc.
+      const startDelay = i * staggerDelayMs;
+      
+      if (startDelay > 0) {
+        logImmediate('⏳', `Attempt ${i + 1} will start in ${(startDelay / 1000).toFixed(1)}s (staggered)`);
+      }
+      
+      return new Promise<void>((resolve, reject) => {
+        setTimeout(async () => {
+          try {
+            await processAttempt(i);
+            resolve();
+          } catch (error) {
+            reject(error);
+          }
+        }, startDelay);
+      });
+    });
     
     // Wait for all attempts to complete (or fail)
     const results = await Promise.allSettled(attemptPromises);

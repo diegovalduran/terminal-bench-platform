@@ -91,9 +91,23 @@ export function AttemptCard({ attempt, jobId }: AttemptCardProps) {
     <Card className="border-zinc-200 shadow-sm">
       <CardHeader className="flex flex-col gap-2 pb-4 sm:flex-row sm:items-center sm:justify-between">
         <div>
-          <p className="text-xs uppercase tracking-wide text-zinc-500">
-            Attempt {attempt.index + 1}
-          </p>
+          <div className="flex items-center gap-2">
+            <p className="text-xs uppercase tracking-wide text-zinc-500">
+              Attempt {attempt.index + 1}
+            </p>
+            {/* Agent Passed/Failed badge - only show if attempt is completed and has test results */}
+            {attempt.status !== "running" && attempt.status !== "queued" && attempt.testsTotal > 0 && (
+              <Badge
+                className={
+                  attempt.testsPassed === attempt.testsTotal
+                    ? "bg-emerald-100 text-emerald-800"
+                    : "bg-rose-100 text-rose-800"
+                }
+              >
+                {attempt.testsPassed === attempt.testsTotal ? "Agent Passed" : "Agent Failed"}
+              </Badge>
+            )}
+          </div>
           <CardTitle className="text-xl">Tests {passRate} passed</CardTitle>
           <p className="text-sm text-zinc-500">Duration: {duration}</p>
         </div>
@@ -179,7 +193,7 @@ export function AttemptCard({ attempt, jobId }: AttemptCardProps) {
           <Badge
             className={`capitalize ${attemptStatusColor[attempt.status]} hover:${attemptStatusColor[attempt.status]}`}
           >
-            {attempt.status}
+            {attempt.status === "success" || attempt.status === "failed" ? "completed" : attempt.status}
           </Badge>
         </div>
       </CardHeader>
@@ -296,77 +310,85 @@ export function AttemptCard({ attempt, jobId }: AttemptCardProps) {
 
         <Separator />
 
-        {/* Episodes Section */}
-        <div>
-          <div className="mb-3 flex items-center gap-2">
-            <p className="text-sm font-semibold text-zinc-800">Episodes</p>
-            <Badge
-              variant="secondary"
-              className="bg-zinc-100 text-zinc-700 hover:bg-zinc-100"
-            >
-              {attempt.episodes.length}
-            </Badge>
-          </div>
-          <Accordion type="single" collapsible>
-            {attempt.episodes.map((episode) => (
-              <AccordionItem key={episode.id} value={episode.id}>
-                <AccordionTrigger>
-                  <div className="text-left">
-                    <p className="text-sm font-semibold text-zinc-900">
-                      Episode {episode.index}
-                    </p>
-                    <p className="text-xs text-zinc-500">
-                      {episode.stateAnalysis.slice(0, 80)}…
-                    </p>
-                  </div>
-                </AccordionTrigger>
-                <AccordionContent className="space-y-4 pt-2">
-                  {/* State Analysis Container */}
-                  <div className="rounded-lg border border-blue-200 bg-blue-50 p-4">
-                    <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-blue-900">
-                      State Analysis:
-                    </p>
-                    <p className="text-sm leading-relaxed text-blue-950">
-                      {episode.stateAnalysis}
-                    </p>
-                  </div>
+        {/* Episodes Section - Collapsible */}
+        <Accordion type="single" collapsible>
+          <AccordionItem value="episodes" className="border-none">
+            <AccordionTrigger className="hover:no-underline">
+              <div className="flex w-full items-center justify-between pr-4">
+                <p className="text-sm font-semibold text-zinc-800">Episodes</p>
+                <Badge
+                  variant="secondary"
+                  className="bg-zinc-100 text-zinc-700 hover:bg-zinc-100"
+                >
+                  {attempt.episodes.length}
+                </Badge>
+              </div>
+            </AccordionTrigger>
+            <AccordionContent className="pt-3">
+              <Accordion type="single" collapsible>
+                {attempt.episodes.map((episode) => (
+                  <AccordionItem key={episode.id} value={episode.id} className="border-none">
+                    <div className="rounded-lg border border-zinc-200 bg-white transition-colors hover:bg-zinc-50">
+                      <AccordionTrigger className="px-4 py-3 hover:no-underline">
+                        <div className="text-left">
+                          <p className="text-sm font-semibold text-zinc-900">
+                            Episode {episode.index}
+                          </p>
+                          <p className="text-xs text-zinc-500">
+                            {episode.stateAnalysis.slice(0, 80)}…
+                          </p>
+                        </div>
+                      </AccordionTrigger>
+                      <AccordionContent className="space-y-4 px-4 pb-3">
+                        {/* State Analysis Container */}
+                        <div className="rounded-lg border border-blue-200 bg-blue-50 p-4">
+                          <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-blue-900">
+                            State Analysis:
+                          </p>
+                          <p className="text-sm leading-relaxed text-blue-950">
+                            {episode.stateAnalysis}
+                          </p>
+                        </div>
 
-                  {/* Explanation Container */}
-                  <div className="rounded-lg border border-purple-200 bg-purple-50 p-4">
-                    <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-purple-900">
-                      Explanation:
-                    </p>
-                    <p className="text-sm leading-relaxed text-purple-950">
-                      {episode.explanation}
-                    </p>
-                  </div>
+                        {/* Explanation Container */}
+                        <div className="rounded-lg border border-purple-200 bg-purple-50 p-4">
+                          <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-purple-900">
+                            Explanation:
+                          </p>
+                          <p className="text-sm leading-relaxed text-purple-950">
+                            {episode.explanation}
+                          </p>
+                        </div>
 
-                  {/* Commands Section */}
-                  <div>
-                    <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-zinc-700">
-                      Commands:
-                    </p>
-                    <div className="h-[576px] w-full overflow-y-auto rounded-lg border border-zinc-300 bg-zinc-900">
-                      <div className="space-y-4 p-4 font-mono text-sm">
-                        {episode.commands.map((command, idx) => (
-                          <div key={`${episode.id}-cmd-${idx}`} className="space-y-2">
-                            <p className="whitespace-pre-wrap break-words text-emerald-400">$ {command.command}</p>
-                            <pre className="whitespace-pre-wrap break-words text-zinc-100">
-                              {command.output}
-                            </pre>
-                            {idx < episode.commands.length - 1 && (
-                              <Separator className="bg-zinc-700" />
-                            )}
+                        {/* Commands Section */}
+                        <div>
+                          <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-zinc-700">
+                            Commands:
+                          </p>
+                          <div className="h-[576px] w-full overflow-y-auto rounded-lg border border-zinc-300 bg-zinc-900">
+                            <div className="space-y-4 p-4 font-mono text-sm">
+                              {episode.commands.map((command, idx) => (
+                                <div key={`${episode.id}-cmd-${idx}`} className="space-y-2">
+                                  <p className="whitespace-pre-wrap break-words text-emerald-400">$ {command.command}</p>
+                                  <pre className="whitespace-pre-wrap break-words text-zinc-100">
+                                    {command.output}
+                                  </pre>
+                                  {idx < episode.commands.length - 1 && (
+                                    <Separator className="bg-zinc-700" />
+                                  )}
+                                </div>
+                              ))}
+                            </div>
                           </div>
-                        ))}
-                      </div>
+                        </div>
+                      </AccordionContent>
                     </div>
-                  </div>
-                </AccordionContent>
-              </AccordionItem>
-            ))}
-          </Accordion>
-        </div>
+                  </AccordionItem>
+                ))}
+              </Accordion>
+            </AccordionContent>
+          </AccordionItem>
+        </Accordion>
       </CardContent>
     </Card>
   );
