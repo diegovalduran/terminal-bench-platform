@@ -273,10 +273,19 @@ function runHarborCommand(
   options: { cwd: string; timeout: number }
 ): Promise<{ stdout: string; stderr: string }> {
   return new Promise((resolve, reject) => {
+    // Prepare environment variables for Harbor process
+    // Explicitly pass OPENAI_API_KEY so Harbor can use it for Terminus 2
+    const env = {
+      ...process.env, // Inherit all environment variables
+      // Explicitly ensure OPENAI_API_KEY is available if set
+      ...(process.env.OPENAI_API_KEY ? { OPENAI_API_KEY: process.env.OPENAI_API_KEY } : {}),
+    };
+    
     const child = spawn(command, args, {
       cwd: options.cwd,
       detached: true, // Create new process group for easier killing
       stdio: ['ignore', 'pipe', 'pipe'],
+      env, // Pass environment variables explicitly
     });
 
     // Update running job with process reference
@@ -379,15 +388,41 @@ interface HarborTrialResult {
 }
 
 interface TrajectoryStep {
-  observation?: string;
+  // Legacy format fields
+  observation?: string | { results?: Array<{ content?: string }> }; // Can be string (legacy) or object (ATIF)
   thought?: string;
   action?: string;
   command?: string;
   output?: string;
   exit_code?: number;
+  // ATIF format (Terminus 2)
+  step_id?: number;
+  timestamp?: string;
+  source?: "system" | "agent";
+  message?: string;
+  tool_calls?: Array<{
+    tool_call_id?: string;
+    function_name?: string;
+    arguments?: {
+      keystrokes?: string;
+      duration?: number;
+    };
+  }>;
+  metrics?: {
+    prompt_tokens?: number;
+    completion_tokens?: number;
+    cost_usd?: number;
+  };
 }
 
 interface Trajectory {
+  schema_version?: string;
+  session_id?: string;
+  agent?: {
+    name?: string;
+    version?: string;
+    model_name?: string;
+  };
   steps?: TrajectoryStep[];
   observations?: Array<{
     state: string;
@@ -454,8 +489,124 @@ async function parseTrajectory(trialDir: string): Promise<{
       commands: Array<{ command: string; output: string; exitCode?: number }>;
     }> = [];
     
-    // Parse steps-based trajectory (common format)
-    if (trajectory.steps && Array.isArray(trajectory.steps)) {
+    // Check if this is ATIF format (Terminus 2) - has schema_version and steps with source/message
+    const isATIF = trajectory.schema_version && trajectory.steps && Array.isArray(trajectory.steps);
+    
+    if (isATIF && trajectory.steps) {
+      // Parse ATIF format (Terminus 2)
+      // Group steps by agent episodes (each agent step with tool_calls is an episode)
+      let currentEpisode: {
+        stateAnalysis: string;
+        explanation: string;
+        commands: Array<{ command: string; output: string; exitCode?: number }>;
+      } | null = null;
+      
+      for (const step of trajectory.steps) {
+        // Agent steps contain the analysis/plan and commands
+        if (step.source === "agent" && step.message) {
+          // Extract analysis and plan from message
+          // Message format: "Analysis: ...\nPlan: ..."
+          const messageLines = step.message.split('\n');
+          let analysis = "";
+          let plan = "";
+          let inAnalysis = false;
+          let inPlan = false;
+          
+          for (const line of messageLines) {
+            if (line.startsWith("Analysis:")) {
+              inAnalysis = true;
+              inPlan = false;
+              analysis = line.replace(/^Analysis:\s*/, "");
+            } else if (line.startsWith("Plan:")) {
+              inPlan = true;
+              inAnalysis = false;
+              plan = line.replace(/^Plan:\s*/, "");
+            } else if (inAnalysis) {
+              analysis += "\n" + line;
+            } else if (inPlan) {
+              plan += "\n" + line;
+            }
+          }
+          
+          // If no explicit Analysis/Plan, use the whole message as explanation
+          const explanation = plan || analysis || step.message;
+          const stateAnalysis = analysis || "Agent analysis";
+          
+          // Extract commands from tool_calls
+          const commands: Array<{ command: string; output: string; exitCode?: number }> = [];
+          if (step.tool_calls && Array.isArray(step.tool_calls)) {
+            for (const toolCall of step.tool_calls) {
+              if (toolCall.function_name === "bash_command" && toolCall.arguments?.keystrokes) {
+                commands.push({
+                  command: toolCall.arguments.keystrokes.trim(),
+                  output: "", // Will be filled from next observation step
+                  exitCode: undefined,
+                });
+              }
+            }
+          }
+          
+          // Create new episode
+          currentEpisode = {
+            stateAnalysis: stateAnalysis.trim() || "Agent analysis",
+            explanation: explanation.trim() || "Agent plan",
+            commands,
+          };
+        }
+        // Observation steps contain terminal output
+        // Check for ATIF observation structure (nested object with results array)
+        else if (step.source === "system" && step.observation && typeof step.observation === "object" && !Array.isArray(step.observation) && "results" in step.observation) {
+          // Get terminal output from observation
+          const obs = step.observation as { results?: Array<{ content?: string }> };
+          const terminalOutput = obs.results
+            ?.map(r => r.content || "")
+            .join("\n")
+            .trim() || "";
+          
+          // If we have a current episode, add output to the last command
+          if (currentEpisode && currentEpisode.commands.length > 0) {
+            const lastCommand = currentEpisode.commands[currentEpisode.commands.length - 1];
+            if (!lastCommand.output) {
+              lastCommand.output = terminalOutput;
+            } else {
+              // If output already exists, append (multiple observations per command)
+              lastCommand.output += "\n" + terminalOutput;
+            }
+          } else if (terminalOutput) {
+            // If no current episode but we have output, create a basic episode
+            currentEpisode = {
+              stateAnalysis: "Terminal output",
+              explanation: "System observation",
+              commands: [{
+                command: "",
+                output: terminalOutput,
+                exitCode: undefined,
+              }],
+            };
+          }
+        }
+        
+        // If we have a complete episode (with commands and output), add it
+        if (currentEpisode && currentEpisode.commands.length > 0) {
+          // Check if this episode is complete (has output for at least one command)
+          const hasOutput = currentEpisode.commands.some(c => c.output);
+          if (hasOutput || step.source === "agent") {
+            // Only add episode if it has meaningful content
+            if (currentEpisode.stateAnalysis || currentEpisode.explanation || currentEpisode.commands.length > 0) {
+              episodes.push(currentEpisode);
+              currentEpisode = null; // Reset for next episode
+            }
+          }
+        }
+      }
+      
+      // Add final episode if it exists
+      if (currentEpisode && (currentEpisode.commands.length > 0 || currentEpisode.stateAnalysis || currentEpisode.explanation)) {
+        episodes.push(currentEpisode);
+      }
+    }
+    // Legacy format: steps-based trajectory (simple format)
+    else if (trajectory.steps && Array.isArray(trajectory.steps)) {
       for (const step of trajectory.steps) {
         const commands: Array<{ command: string; output: string; exitCode?: number }> = [];
         
@@ -467,14 +618,19 @@ async function parseTrajectory(trialDir: string): Promise<{
           });
         }
         
+        // Handle observation (can be string or object)
+        const observationText = typeof step.observation === "string" 
+          ? step.observation 
+          : "No observation recorded";
+        
         episodes.push({
-          stateAnalysis: step.observation || "No observation recorded",
+          stateAnalysis: observationText,
           explanation: step.thought || step.action || "Agent action",
           commands,
         });
       }
     }
-    // Parse action-based trajectory (alternative format)
+    // Legacy format: action-based trajectory
     else if (trajectory.actions && Array.isArray(trajectory.actions)) {
       for (const action of trajectory.actions) {
         episodes.push({
@@ -691,18 +847,34 @@ export async function processJob(job: QueuedJob) {
           await mkdir(attemptOutputDir, { recursive: true });
           
           // Determine which agent to use based on environment
-          const useTerminus2 = process.env.OPENAI_API_KEY && process.env.OPENAI_API_KEY.length > 0;
+          const hasApiKey = process.env.OPENAI_API_KEY && process.env.OPENAI_API_KEY.length > 0;
+          const useTerminus2 = hasApiKey;
+          
+          // Get model from environment variable (default to gpt-4o-mini for cost savings)
+          const model = process.env.HARBOR_MODEL || 'gpt-4o-mini';
+          const isGPT5 = model.includes('gpt-5');
+          
+          if (useTerminus2) {
+            const apiKeyPreview = process.env.OPENAI_API_KEY?.substring(0, 10) || 'unknown';
+            logImmediate('🔑', `API Key detected: ${apiKeyPreview}... (Terminus 2 enabled)`);
+            logImmediate('🤖', `Using model: ${model}`);
+          } else {
+            logImmediate('⚠️', `No OPENAI_API_KEY found, using Oracle agent`);
+          }
+          
           const harborArgs = [
             'run',
             '--path', actualTaskDir,
             '--agent', useTerminus2 ? 'terminus-2' : 'oracle',
-            ...(useTerminus2 ? ['--model', 'gpt-5'] : []),
+            ...(useTerminus2 ? ['--model', model] : []),
+            // Add reasoning_effort for gpt-5 only (not supported by other models)
+            ...(useTerminus2 && isGPT5 ? ['--ak', 'reasoning_effort=medium'] : []),
             '--env', 'docker',
             '--jobs-dir', attemptOutputDir,
             '--n-concurrent', '1',
           ];
           
-          const agentName = useTerminus2 ? 'Terminus 2 (GPT-5)' : 'Oracle agent';
+          const agentName = useTerminus2 ? `Terminus 2 (${model})` : 'Oracle agent';
           logImmediate('🤖', `Running Harbor with ${agentName} (Attempt ${attemptIndex + 1})`);
           
           const { stdout, stderr } = await runHarborCommand(
@@ -730,10 +902,45 @@ export async function processJob(job: QueuedJob) {
           const resultContent = await readFile(resultPath, "utf-8");
           const result: HarborTrialResult = JSON.parse(resultContent);
           
-          // Parse rewards
-          const rewards = result.verifier_result?.rewards || {};
-          const testsPassed = Object.values(rewards).filter((r) => r === 1).length;
-          const testsTotal = Object.keys(rewards).length;
+          // Parse test results from ctrf.json (structured format)
+          let testsPassed = 0;
+          let testsTotal = 0;
+          let testCases: Array<{
+            name: string;
+            status: string;
+            trace?: string;
+            message?: string;
+          }> = [];
+          
+          const ctrfPath = join(trialDir, "verifier", "ctrf.json");
+          const ctrfContent = await readFile(ctrfPath, "utf-8").catch(() => null);
+          
+          if (ctrfContent) {
+            try {
+              const ctrf = JSON.parse(ctrfContent);
+              if (ctrf.results?.summary) {
+                testsPassed = ctrf.results.summary.passed || 0;
+                testsTotal = ctrf.results.summary.tests || 0;
+              }
+              if (ctrf.results?.tests && Array.isArray(ctrf.results.tests)) {
+                testCases = ctrf.results.tests.map((test: any) => ({
+                  name: test.name || "Unknown test",
+                  status: test.status || "unknown",
+                  trace: test.trace,
+                  message: test.message,
+                }));
+              }
+            } catch (error) {
+              console.error(`[Worker] Failed to parse ctrf.json:`, error);
+            }
+          }
+          
+          // Fallback to result.json rewards if ctrf.json not available
+          if (testsTotal === 0) {
+            const rewards = result.verifier_result?.rewards || {};
+            testsPassed = Object.values(rewards).filter((r) => r === 1).length;
+            testsTotal = Object.keys(rewards).length || 0;
+          }
           
           logImmediate('🧪', `Test results: ${testsPassed}/${testsTotal} passed`);
           
@@ -798,15 +1005,25 @@ export async function processJob(job: QueuedJob) {
             return;
           }
           
+          // Get rewards from result.json for rewardSummary
+          const rewards = result.verifier_result?.rewards || {};
+          
           // Update attempt with results and S3 log path
-          await updateAttempt(attempt.id, {
+          const attemptUpdates: Parameters<typeof updateAttempt>[1] = {
             status: attemptStatus,
             testsPassed,
             testsTotal,
             rewardSummary: rewards,
             logPath: s3TrialUrl, // Store S3 URL instead of local path
             finishedAt: new Date(),
-          });
+          };
+          
+          // Add test cases to metadata if available
+          if (testCases.length > 0) {
+            attemptUpdates.metadata = { testCases };
+          }
+          
+          await updateAttempt(attempt.id, attemptUpdates);
           
           // Increment job progress
           await incrementJobProgress(job.jobId);

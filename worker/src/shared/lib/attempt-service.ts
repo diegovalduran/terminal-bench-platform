@@ -56,6 +56,7 @@ export async function updateAttempt(
     rewardSummary?: Record<string, number>;
     logPath?: string;
     finishedAt?: Date;
+    metadata?: Record<string, unknown>;
   }
 ) {
   if (!db) {
