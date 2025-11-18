@@ -2,7 +2,6 @@
 
 import { useState } from "react";
 import { signIn } from "next-auth/react";
-import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -10,7 +9,6 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import Link from "next/link";
 
 export default function RegisterPage() {
-  const router = useRouter();
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -44,11 +42,11 @@ export default function RegisterPage() {
 
       if (result?.error) {
         toast.error("Account created but login failed. Please try logging in.");
-        router.push("/login");
+        window.location.href = "/login";
       } else {
         toast.success("Account created successfully");
-        router.push("/");
-        router.refresh();
+        // Use window.location for a full page reload to ensure session cookie is set
+        window.location.href = "/";
       }
     } catch (error) {
       toast.error("An error occurred during registration");
