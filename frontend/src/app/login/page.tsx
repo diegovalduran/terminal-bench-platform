@@ -37,12 +37,26 @@ export default function LoginPage() {
         toast.error("Invalid email or password");
         setIsLoading(false);
       } else if (result?.ok) {
-        console.log("[Login] Sign in successful, waiting for cookie to be set...");
+        console.log("[Login] Sign in successful, checking cookies...");
+        
+        // Check if cookie is set
+        const cookies = document.cookie.split(';').map(c => c.trim());
+        console.log("[Login] Current cookies:", cookies);
+        const hasSessionCookie = cookies.some(c => c.includes('next-auth'));
+        console.log("[Login] Has session cookie:", hasSessionCookie);
+        
         toast.success("Logged in successfully");
         
         // Wait a moment for the cookie to be set before redirecting
         // This ensures the session cookie is available when the page loads
+        console.log("[Login] Waiting 1 second for cookie to be set...");
         await new Promise(resolve => setTimeout(resolve, 1000));
+        
+        // Check again after delay
+        const cookiesAfter = document.cookie.split(';').map(c => c.trim());
+        console.log("[Login] Cookies after delay:", cookiesAfter);
+        const hasSessionCookieAfter = cookiesAfter.some(c => c.includes('next-auth'));
+        console.log("[Login] Has session cookie after delay:", hasSessionCookieAfter);
         
         console.log("[Login] Redirecting to home page...");
         // Use window.location for a full page reload to ensure session cookie is set
