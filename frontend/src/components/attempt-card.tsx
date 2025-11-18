@@ -95,16 +95,21 @@ export function AttemptCard({ attempt, jobId }: AttemptCardProps) {
             <p className="text-xs uppercase tracking-wide text-zinc-500">
               Attempt {attempt.index + 1}
             </p>
-            {/* Agent Passed/Failed badge - only show if attempt is completed and has test results */}
-            {attempt.status !== "running" && attempt.status !== "queued" && attempt.testsTotal > 0 && (
+            {/* Agent Passed/Failed badge - show for all completed attempts */}
+            {attempt.status !== "running" && attempt.status !== "queued" && (
               <Badge
                 className={
-                  attempt.testsPassed === attempt.testsTotal
-                    ? "bg-emerald-100 text-emerald-800"
-                    : "bg-rose-100 text-rose-800"
+                  // 0/0 is treated as failed (something went wrong)
+                  attempt.testsTotal === 0 || attempt.testsPassed !== attempt.testsTotal
+                    ? "bg-rose-100 text-rose-800"
+                    : "bg-emerald-100 text-emerald-800"
                 }
               >
-                {attempt.testsPassed === attempt.testsTotal ? "Agent Passed" : "Agent Failed"}
+                {attempt.testsTotal === 0 
+                  ? "Agent Failed"  // 0/0 means something went wrong
+                  : attempt.testsPassed === attempt.testsTotal 
+                    ? "Agent Passed" 
+                    : "Agent Failed"}
               </Badge>
             )}
           </div>

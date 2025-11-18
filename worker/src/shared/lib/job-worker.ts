@@ -764,11 +764,37 @@ async function parseTrajectory(trialDir: string): Promise<{
     }
     
     // Neither trajectory.json nor oracle.txt exists (or oracle.txt is empty)
+    // Add diagnostic logging to understand why
+    const agentDir = join(trialDir, "agent");
+    const agentDirExists = await stat(agentDir).then(() => true).catch(() => false);
+    
+    let diagnosticMessage = "Agent output files not found";
+    
+    if (!agentDirExists) {
+      console.log(`[Worker] Agent directory missing - agent may not have run`);
+      diagnosticMessage = "Agent directory not found - agent may have crashed before creating output files";
+    } else {
+      // Check if directory is empty
+      try {
+        const agentFiles = await readdir(agentDir);
+        if (agentFiles.length === 0) {
+          console.log(`[Worker] Agent directory is empty - agent may have crashed before writing files`);
+          diagnosticMessage = "Agent directory exists but is empty - agent may have crashed before creating trajectory files";
+        } else {
+          console.log(`[Worker] Agent directory exists with ${agentFiles.length} file(s): ${agentFiles.join(', ')}`);
+          diagnosticMessage = "Trajectory files not found - agent may have timed out or crashed before completing execution";
+        }
+      } catch (error) {
+        console.log(`[Worker] Error reading agent directory: ${error instanceof Error ? error.message : 'Unknown error'}`);
+        diagnosticMessage = "Agent directory exists but could not be read";
+      }
+    }
+    
     console.log(`[Worker] No trajectory file found (neither trajectory.json nor valid oracle.txt)`);
     return {
       episodes: [{
-        stateAnalysis: "No trajectory available",
-        explanation: "Agent output files not found",
+        stateAnalysis: "Agent execution incomplete",
+        explanation: diagnosticMessage,
         commands: [],
       }],
       totalDurationMs: 0,
@@ -1254,6 +1280,43 @@ export async function processJob(job: QueuedJob) {
             testsTotal = Object.keys(rewards).length || 0;
           }
           
+          // Diagnostic logging for 0/0 tests
+          if (testsTotal === 0) {
+            logImmediate('⚠️', `No test results found (0/0) - investigating cause...`);
+            
+            // Check verifier directory
+            const verifierDir = join(trialDir, "verifier");
+            const verifierExists = await stat(verifierDir).then(() => true).catch(() => false);
+            
+            // Check test output files
+            const testStdoutPath = join(verifierDir, "test-stdout.txt");
+            const testStdoutExists = await stat(testStdoutPath).then(() => true).catch(() => false);
+            const testStderrPath = join(verifierDir, "test-stderr.txt");
+            const testStderrExists = await stat(testStderrPath).then(() => true).catch(() => false);
+            
+            // Check result.json structure
+            if (!result.verifier_result) {
+              logImmediate('❌', `result.json has no verifier_result - verifier may not have run`);
+            } else if (!result.verifier_result.rewards || Object.keys(result.verifier_result.rewards).length === 0) {
+              logImmediate('❌', `verifier_result.rewards is empty - tests may not have executed`);
+            }
+            
+            if (!verifierExists) {
+              logImmediate('❌', `Verifier directory missing - verifier did not run`);
+            } else if (!testStdoutExists && !testStderrExists) {
+              logImmediate('❌', `Test output files missing - tests did not execute`);
+            } else if (testStdoutExists) {
+              // Try to read test stdout for clues
+              try {
+                const testStdout = await readFile(testStdoutPath, "utf-8");
+                const stdoutPreview = testStdout.slice(0, 200);
+                logImmediate('ℹ️', `Test stdout exists (${testStdout.length} chars): ${stdoutPreview}...`);
+              } catch (e) {
+                // Ignore read errors
+              }
+            }
+          }
+          
           logImmediate('🧪', `Test results: ${testsPassed}/${testsTotal} passed`);
           
           // Parse trajectory for detailed episodes
@@ -1291,7 +1354,11 @@ export async function processJob(job: QueuedJob) {
             return;
           }
           
-          const attemptStatus = testsPassed === testsTotal ? "success" : "failed";
+          // Treat 0/0 as failed (something went wrong, not success)
+          // 0/0 means tests didn't run or verifier failed, which is a failure case
+          const attemptStatus = (testsTotal === 0) 
+            ? "failed"  // 0/0 means something went wrong
+            : (testsPassed === testsTotal ? "success" : "failed");
           
           // Upload trial directory to S3
           logImmediate('☁️', `Uploading trial directory to S3 (Attempt ${attemptIndex + 1})...`);
