@@ -6,11 +6,12 @@ import { QueuedJob } from "@/types/runs";
 import { updateJobStatus, incrementJobProgress } from "./job-service";
 import { createAttempt, updateAttempt, createEpisode } from "./attempt-service";
 import { downloadFile, uploadDirectory } from "./s3-service";
+import { Semaphore } from "./semaphore";
 
 // Process registry for tracking and cancelling jobs
 interface RunningJob {
   jobId: string;
-  process: ChildProcess | null;
+  processes: Set<ChildProcess>; // Track all concurrent processes
   cancelled: boolean;
 }
 
@@ -47,18 +48,31 @@ export function cancelJob(jobId: string): boolean {
   console.log(`[Worker] Cancelling job ${jobId}...`);
   job.cancelled = true;
 
-  if (job.process && !job.process.killed) {
-    // Kill the process and all its children
-    try {
-      process.kill(-job.process.pid!, "SIGTERM");
-      console.log(`[Worker] Sent SIGTERM to process group ${job.process.pid}`);
-    } catch (error) {
-      console.error(`[Worker] Error killing process:`, error);
-      // Try direct kill as fallback
-      job.process.kill("SIGKILL");
+  // Kill all processes for this job
+  let killedCount = 0;
+  for (const childProcess of job.processes) {
+    if (!childProcess.killed && childProcess.pid) {
+      try {
+        // Kill the process and all its children (process group)
+        // Use global process.kill with negative PID to kill process group
+        // TypeScript types don't fully support this, so we use @ts-ignore
+        // @ts-ignore - process.kill supports negative PID for process groups
+        process.kill(-childProcess.pid, "SIGTERM");
+        console.log(`[Worker] Sent SIGTERM to process group ${childProcess.pid}`);
+        killedCount++;
+      } catch (error) {
+        console.error(`[Worker] Error killing process ${childProcess.pid}:`, error);
+        // Try direct kill as fallback
+        try {
+          childProcess.kill("SIGKILL");
+        } catch (killError) {
+          console.error(`[Worker] Error with SIGKILL fallback:`, killError);
+        }
+      }
     }
   }
 
+  console.log(`[Worker] Cancelled ${killedCount} processes for job ${jobId}`);
   return true;
 }
 
@@ -82,7 +96,12 @@ function runHarborCommand(
     // Update running job with process reference
     const runningJob = runningJobs.get(jobId);
     if (runningJob) {
-      runningJob.process = child;
+      runningJob.processes.add(child);
+      
+      // Remove process from set when it exits
+      child.on('exit', () => {
+        runningJob.processes.delete(child);
+      });
     }
 
     let stdout = '';
@@ -333,7 +352,7 @@ export async function processJob(job: QueuedJob) {
   // Register job for cancellation tracking
   runningJobs.set(job.jobId, {
     jobId: job.jobId,
-    process: null,
+    processes: new Set<ChildProcess>(),
     cancelled: false,
   });
   
@@ -376,145 +395,173 @@ export async function processJob(job: QueuedJob) {
     const actualTaskDir = await findTaskDirectory(taskDir);
     console.log(`[Worker] Found task directory: ${actualTaskDir}`);
     
-    // Run Harbor for each attempt
-    for (let i = 0; i < job.runsRequested; i++) {
-      // Check for cancellation before each attempt
+    // Create semaphore to limit concurrent attempts (max 10)
+    const maxConcurrentAttempts = parseInt(process.env.MAX_CONCURRENT_ATTEMPTS_PER_JOB || "10", 10);
+    const semaphore = new Semaphore(maxConcurrentAttempts);
+    console.log(`[Worker] Running ${job.runsRequested} attempts with max ${maxConcurrentAttempts} concurrent`);
+    
+    // Process a single attempt
+    const processAttempt = async (attemptIndex: number) => {
+      // Check for cancellation before starting attempt
       if (isJobCancelled(job.jobId)) {
-        console.log(`[Worker] Job ${job.jobId} cancelled, stopping attempts`);
-        throw new Error("Job cancelled");
+        console.log(`[Worker] Job ${job.jobId} cancelled, skipping attempt ${attemptIndex + 1}`);
+        return;
       }
       
-      console.log(`[Worker] Job ${job.jobId} - Attempt ${i + 1}/${job.runsRequested}`);
-      
-      const attempt = await createAttempt({
-        jobId: job.jobId,
-        index: i,
-        status: "running",
-      });
-      
-      const attemptStartTime = Date.now();
+      // Acquire semaphore permit (waits if 10 attempts already running)
+      await semaphore.acquire();
       
       try {
-        const attemptOutputDir = join(outputDir, `attempt-${i}`);
-        await mkdir(attemptOutputDir, { recursive: true });
+        console.log(`[Worker] Job ${job.jobId} - Attempt ${attemptIndex + 1}/${job.runsRequested} (${semaphore.getWaitersCount()} waiting)`);
         
-        // Determine which agent to use based on environment
-        const useTerminus2 = process.env.OPENAI_API_KEY && process.env.OPENAI_API_KEY.length > 0;
-        const harborArgs = [
-          'run',
-          '--path', actualTaskDir,
-          '--agent', useTerminus2 ? 'terminus-2' : 'oracle',
-          ...(useTerminus2 ? ['--model', 'gpt-5'] : []),
-          '--env', 'docker',
-          '--jobs-dir', attemptOutputDir,
-          '--n-concurrent', '1',
-        ];
+        const attempt = await createAttempt({
+          jobId: job.jobId,
+          index: attemptIndex,
+          status: "running",
+        });
         
-        console.log(`[Worker] Running Harbor with ${useTerminus2 ? 'Terminus 2 (GPT-5)' : 'Oracle agent'}`);
+        const attemptStartTime = Date.now();
         
-        const { stdout, stderr } = await runHarborCommand(
-          'harbor',
-          harborArgs,
-          job.jobId,
-          {
-            cwd: process.cwd(),
-            timeout: 15 * 60 * 1000, // 15 minutes
+        try {
+          const attemptOutputDir = join(outputDir, `attempt-${attemptIndex}`);
+          await mkdir(attemptOutputDir, { recursive: true });
+          
+          // Determine which agent to use based on environment
+          const useTerminus2 = process.env.OPENAI_API_KEY && process.env.OPENAI_API_KEY.length > 0;
+          const harborArgs = [
+            'run',
+            '--path', actualTaskDir,
+            '--agent', useTerminus2 ? 'terminus-2' : 'oracle',
+            ...(useTerminus2 ? ['--model', 'gpt-5'] : []),
+            '--env', 'docker',
+            '--jobs-dir', attemptOutputDir,
+            '--n-concurrent', '1',
+          ];
+          
+          console.log(`[Worker] Running Harbor with ${useTerminus2 ? 'Terminus 2 (GPT-5)' : 'Oracle agent'}`);
+          
+          const { stdout, stderr } = await runHarborCommand(
+            'harbor',
+            harborArgs,
+            job.jobId,
+            {
+              cwd: process.cwd(),
+              timeout: 15 * 60 * 1000, // 15 minutes
+            }
+          );
+          
+          console.log(`[Worker] Harbor stdout:`, stdout.slice(0, 500));
+          if (stderr) console.log(`[Worker] Harbor stderr:`, stderr.slice(0, 500));
+          
+          // Parse Harbor output using helper functions
+          const latestRunDir = await findLatestHarborOutput(attemptOutputDir);
+          console.log(`[Worker] Latest run dir: ${latestRunDir}`);
+          
+          const trialDir = await findTrialDirectory(latestRunDir);
+          console.log(`[Worker] Trial dir: ${trialDir}`);
+          
+          // Parse result.json
+          const resultPath = join(trialDir, "result.json");
+          const resultContent = await readFile(resultPath, "utf-8");
+          const result: HarborTrialResult = JSON.parse(resultContent);
+          
+          // Parse rewards
+          const rewards = result.verifier_result?.rewards || {};
+          const testsPassed = Object.values(rewards).filter((r) => r === 1).length;
+          const testsTotal = Object.keys(rewards).length;
+          
+          console.log(`[Worker] Tests: ${testsPassed}/${testsTotal}`);
+          
+          // Parse trajectory for detailed episodes
+          const { episodes } = await parseTrajectory(trialDir);
+          console.log(`[Worker] Parsed ${episodes.length} episodes from trajectory`);
+          
+          // Create episodes in database
+          for (let episodeIdx = 0; episodeIdx < episodes.length; episodeIdx++) {
+            const episode = episodes[episodeIdx];
+            await createEpisode({
+              attemptId: attempt.id,
+              index: episodeIdx,
+              stateAnalysis: episode.stateAnalysis,
+              explanation: episode.explanation,
+              commands: episode.commands,
+              durationMs: undefined, // Could be calculated per-episode if timestamps available
+            });
           }
-        );
-        
-        console.log(`[Worker] Harbor stdout:`, stdout.slice(0, 500));
-        if (stderr) console.log(`[Worker] Harbor stderr:`, stderr.slice(0, 500));
-        
-        // Parse Harbor output using helper functions
-        const latestRunDir = await findLatestHarborOutput(attemptOutputDir);
-        console.log(`[Worker] Latest run dir: ${latestRunDir}`);
-        
-        const trialDir = await findTrialDirectory(latestRunDir);
-        console.log(`[Worker] Trial dir: ${trialDir}`);
-        
-        // Parse result.json
-        const resultPath = join(trialDir, "result.json");
-        const resultContent = await readFile(resultPath, "utf-8");
-        const result: HarborTrialResult = JSON.parse(resultContent);
-        
-        // Parse rewards
-        const rewards = result.verifier_result?.rewards || {};
-        const testsPassed = Object.values(rewards).filter((r) => r === 1).length;
-        const testsTotal = Object.keys(rewards).length;
-        
-        console.log(`[Worker] Tests: ${testsPassed}/${testsTotal}`);
-        
-        // Parse trajectory for detailed episodes
-        const { episodes } = await parseTrajectory(trialDir);
-        console.log(`[Worker] Parsed ${episodes.length} episodes from trajectory`);
-        
-        // Create episodes in database
-        for (let episodeIdx = 0; episodeIdx < episodes.length; episodeIdx++) {
-          const episode = episodes[episodeIdx];
+          
+          // Calculate attempt duration
+          const attemptDuration = Date.now() - attemptStartTime;
+          const attemptStatus = testsPassed === testsTotal ? "success" : "failed";
+          
+          // Upload trial directory to S3
+          console.log(`[Worker] Uploading trial directory to S3: ${trialDir}`);
+          const s3Prefix = `results/${job.jobId}/attempt-${attemptIndex}/`;
+          const uploadedUrls = await uploadDirectory(trialDir, s3Prefix);
+          console.log(`[Worker] Uploaded ${uploadedUrls.length} files to S3`);
+          
+          // Store S3 URL in database (pointing to the trial directory root)
+          const s3TrialUrl = `s3://${process.env.S3_BUCKET}/${s3Prefix}`;
+          
+          // Update attempt with results and S3 log path
+          await updateAttempt(attempt.id, {
+            status: attemptStatus,
+            testsPassed,
+            testsTotal,
+            rewardSummary: rewards,
+            logPath: s3TrialUrl, // Store S3 URL instead of local path
+            finishedAt: new Date(),
+          });
+          
+          // Increment job progress
+          await incrementJobProgress(job.jobId);
+          
+          console.log(
+            `[Worker] Attempt ${attemptIndex + 1} ${attemptStatus}: ${testsPassed}/${testsTotal} tests passed (${(attemptDuration / 1000).toFixed(1)}s)`
+          );
+        } catch (error) {
+          const attemptDuration = Date.now() - attemptStartTime;
+          const errorMessage = error instanceof Error ? error.message : "Unknown error";
+          
+          console.error(`[Worker] Attempt ${attemptIndex + 1} failed after ${(attemptDuration / 1000).toFixed(1)}s:`, errorMessage);
+          
+          // Update attempt with failure status
+          await updateAttempt(attempt.id, {
+            status: "failed",
+            finishedAt: new Date(),
+          });
+          
+          // Create a fallback episode explaining the error
           await createEpisode({
             attemptId: attempt.id,
-            index: episodeIdx,
-            stateAnalysis: episode.stateAnalysis,
-            explanation: episode.explanation,
-            commands: episode.commands,
-            durationMs: undefined, // Could be calculated per-episode if timestamps available
+            index: 0,
+            stateAnalysis: "Attempt failed during execution",
+            explanation: `Error: ${errorMessage}`,
+            commands: [],
           });
+          
+          // Increment job progress even on failure (so UI shows completion)
+          await incrementJobProgress(job.jobId);
         }
-        
-        // Calculate attempt duration
-        const attemptDuration = Date.now() - attemptStartTime;
-        const attemptStatus = testsPassed === testsTotal ? "success" : "failed";
-        
-        // Upload trial directory to S3
-        console.log(`[Worker] Uploading trial directory to S3: ${trialDir}`);
-        const s3Prefix = `results/${job.jobId}/attempt-${i}/`;
-        const uploadedUrls = await uploadDirectory(trialDir, s3Prefix);
-        console.log(`[Worker] Uploaded ${uploadedUrls.length} files to S3`);
-        
-        // Store S3 URL in database (pointing to the trial directory root)
-        const s3TrialUrl = `s3://${process.env.S3_BUCKET}/${s3Prefix}`;
-        
-        // Update attempt with results and S3 log path
-        await updateAttempt(attempt.id, {
-          status: attemptStatus,
-          testsPassed,
-          testsTotal,
-          rewardSummary: rewards,
-          logPath: s3TrialUrl, // Store S3 URL instead of local path
-          finishedAt: new Date(),
-        });
-        
-        // Increment job progress
-        await incrementJobProgress(job.jobId);
-        
-        console.log(
-          `[Worker] Attempt ${i + 1} ${attemptStatus}: ${testsPassed}/${testsTotal} tests passed (${(attemptDuration / 1000).toFixed(1)}s)`
-        );
-      } catch (error) {
-        const attemptDuration = Date.now() - attemptStartTime;
-        const errorMessage = error instanceof Error ? error.message : "Unknown error";
-        
-        console.error(`[Worker] Attempt ${i + 1} failed after ${(attemptDuration / 1000).toFixed(1)}s:`, errorMessage);
-        
-        // Update attempt with failure status
-        await updateAttempt(attempt.id, {
-          status: "failed",
-          finishedAt: new Date(),
-        });
-        
-        // Create a fallback episode explaining the error
-        await createEpisode({
-          attemptId: attempt.id,
-          index: 0,
-          stateAnalysis: "Attempt failed during execution",
-          explanation: `Error: ${errorMessage}`,
-          commands: [],
-        });
-        
-        // Continue with next attempt (don't fail entire job)
-        console.log(`[Worker] Continuing with next attempt...`);
+      } finally {
+        // Always release semaphore permit
+        semaphore.release();
       }
-    }
+    };
+    
+    // Run all attempts in parallel (limited by semaphore)
+    const attemptPromises = Array.from({ length: job.runsRequested }, (_, i) =>
+      processAttempt(i)
+    );
+    
+    // Wait for all attempts to complete (or fail)
+    const results = await Promise.allSettled(attemptPromises);
+    
+    // Log summary
+    const succeeded = results.filter((r) => r.status === "fulfilled").length;
+    const failed = results.filter((r) => r.status === "rejected").length;
+    console.log(
+      `[Worker] Job ${job.jobId} attempts completed: ${succeeded} succeeded, ${failed} failed`
+    );
     
     // Job completed - update status
     await updateJobStatus(job.jobId, "completed");
