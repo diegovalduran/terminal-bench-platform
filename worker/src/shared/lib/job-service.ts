@@ -1,5 +1,5 @@
-import { db } from "@/db/client";
-import { jobs } from "@/db/schema";
+import { db } from "../db/client.js";
+import { jobs } from "../db/schema.js";
 import { eq, sql } from "drizzle-orm";
 
 export interface CreateJobParams {

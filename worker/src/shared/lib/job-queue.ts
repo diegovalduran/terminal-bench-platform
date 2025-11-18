@@ -1,4 +1,4 @@
-import { QueuedJob } from "@/types/runs";
+import { QueuedJob } from "../types/runs.js";
 
 class JobQueue {
   private queue: QueuedJob[] = [];
@@ -41,15 +41,13 @@ class JobQueue {
       // Start immediately
       this.activeJobsByUser.set(job.userId, job.jobId);
       this.processJob(job);
-      console.log(
-        `[Queue] Starting job ${job.jobId.slice(0, 8)}... for user ${job.userId.slice(0, 8)}... - Running: ${this.running.size + 1}/${this.maxConcurrent}`
-      );
+      const timestamp = new Date().toISOString().split('T')[1].split('.')[0];
+      process.stdout.write(`\n🚀 [${timestamp}] [Queue] Enqueued job ${job.jobId.slice(0, 8)}... for user ${job.userId.slice(0, 8)}... - Running: ${this.running.size + 1}/${this.maxConcurrent}\n`);
     } else {
       // No slots available, add to queue
       this.queue.push(job);
-      console.log(
-        `[Queue] Enqueued job ${job.jobId.slice(0, 8)}... (${job.taskName}) - Queue: ${this.queue.length}, Running: ${this.running.size}/${this.maxConcurrent}`
-      );
+      const timestamp = new Date().toISOString().split('T')[1].split('.')[0];
+      process.stdout.write(`\n⏳ [${timestamp}] [Queue] Queued job ${job.jobId.slice(0, 8)}... (${job.taskName}) - Queue: ${this.queue.length}, Running: ${this.running.size}/${this.maxConcurrent}\n`);
     }
   }
 
@@ -79,22 +77,19 @@ class JobQueue {
 
   private async processJob(job: QueuedJob) {
     this.running.add(job.jobId);
-    console.log(
-      `[Queue] Starting job ${job.jobId.slice(0, 8)}... - Running: ${this.running.size}/${this.maxConcurrent}`
-    );
+    const timestamp = new Date().toISOString().split('T')[1].split('.')[0];
+    process.stdout.write(`\n🔄 [${timestamp}] [Queue] Starting job ${job.jobId.slice(0, 8)}... - Running: ${this.running.size}/${this.maxConcurrent}\n`);
 
     try {
       // Import worker dynamically to avoid circular deps
-      const { processJob: executeJob } = await import("./job-worker");
+      const { processJob: executeJob } = await import("./job-worker.js");
       await executeJob(job);
-      console.log(
-        `[Queue] ✅ Completed job ${job.jobId.slice(0, 8)}... - Running: ${this.running.size - 1}/${this.maxConcurrent}`
-      );
+      const timestamp2 = new Date().toISOString().split('T')[1].split('.')[0];
+      process.stdout.write(`\n✅ [${timestamp2}] [Queue] Completed job ${job.jobId.slice(0, 8)}... - Running: ${this.running.size - 1}/${this.maxConcurrent}\n`);
     } catch (error) {
-      console.error(
-        `[Queue] ❌ Failed job ${job.jobId.slice(0, 8)}...:`,
-        error instanceof Error ? error.message : error
-      );
+      const timestamp3 = new Date().toISOString().split('T')[1].split('.')[0];
+      const errorMsg = error instanceof Error ? error.message : String(error);
+      process.stdout.write(`\n❌ [${timestamp3}] [Queue] Failed job ${job.jobId.slice(0, 8)}...: ${errorMsg}\n`);
     } finally {
       // Remove from running set
       this.running.delete(job.jobId);
@@ -117,9 +112,8 @@ class JobQueue {
         // Start the next job for this user
         this.activeJobsByUser.set(nextJob.userId, nextJob.jobId);
         this.processJob(nextJob);
-        console.log(
-          `[Queue] Started next job for user ${nextJob.userId.slice(0, 8)}... (${userQueue.length} remaining in queue)`
-        );
+        const timestamp = new Date().toISOString().split('T')[1].split('.')[0];
+        process.stdout.write(`\n➡️ [${timestamp}] [Queue] Started next job for user ${nextJob.userId.slice(0, 8)}... (${userQueue.length} remaining in queue)\n`);
       }
       
       // Try to process other available jobs

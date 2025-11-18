@@ -1,10 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
-import { createJob, updateJobStatus } from "@/lib/job-service";
-import { jobQueue } from "@/lib/job-queue";
+import { createJob } from "@/lib/job-service";
 import { fetchJobList } from "@/lib/job-data-service";
 import { uploadFile } from "@/lib/s3-service";
 import { validateStartup } from "@/lib/startup-validation";
+import { db } from "@/db/client";
+import { jobs } from "@/db/schema";
+import { eq, and, or } from "drizzle-orm";
 
 // Validate environment on first API call
 validateStartup();
@@ -42,16 +44,41 @@ export async function POST(request: NextRequest) {
     }
 
     // Check queue limit BEFORE creating job or uploading to S3
-    const userQueueStatus = jobQueue.getUserQueueStatus(session.user.id);
-    
-    // Check if user can queue more jobs
-    if (!userQueueStatus.canQueueMore) {
-      const errorMessage = userQueueStatus.hasActiveJob
-        ? `You already have an active job and ${userQueueStatus.queuedCount} queued jobs. Maximum is ${userQueueStatus.maxQueued} queued jobs. Please wait for your current jobs to complete.`
-        : `You have ${userQueueStatus.queuedCount} queued jobs. Maximum is ${userQueueStatus.maxQueued} queued jobs. Please wait for your jobs to start processing.`;
-      
+    if (!db) {
       return NextResponse.json(
-        { error: errorMessage },
+        { error: "Database not available" },
+        { status: 500 }
+      );
+    }
+
+    // Query database for user's active and queued jobs
+    const userJobs = await db
+      .select()
+      .from(jobs)
+      .where(
+        and(
+          eq(jobs.ownerId, session.user.id),
+          or(eq(jobs.status, "running"), eq(jobs.status, "queued"))
+        )
+      );
+
+    const hasActiveJob = userJobs.some((j) => j.status === "running");
+    const queuedCount = userJobs.filter((j) => j.status === "queued").length;
+    const maxQueued = 5;
+
+    // Check if user can queue more jobs
+    if (hasActiveJob && queuedCount >= maxQueued) {
+      return NextResponse.json(
+        { 
+          error: `You already have an active job and ${queuedCount} queued jobs. Maximum is ${maxQueued} queued jobs. Please wait for your current jobs to complete.` 
+        },
+        { status: 429 }
+      );
+    } else if (!hasActiveJob && queuedCount >= maxQueued) {
+      return NextResponse.json(
+        { 
+          error: `You have ${queuedCount} queued jobs. Maximum is ${maxQueued} queued jobs. Please wait for your jobs to start processing.` 
+        },
         { status: 429 }
       );
     }
@@ -100,27 +127,9 @@ export async function POST(request: NextRequest) {
       userId: session.user.id,
     });
 
-    console.log(`[API] Created job ${job.id}`);
+    console.log(`[API] Created job ${job.id} with status "queued". Worker will pick it up.`);
 
-    // Enqueue for processing (should succeed since we checked limit above)
-    try {
-      jobQueue.enqueue({
-        jobId: job.id,
-        taskName: job.taskName,
-        zipPath: job.zipObjectUrl!, // Pass S3 URL to worker
-        runsRequested: job.runsRequested,
-        userId: session.user.id,
-      });
-    } catch (error) {
-      // This should rarely happen, but handle it gracefully
-      console.error(`[API] Failed to enqueue job ${job.id}:`, error);
-      await updateJobStatus(job.id, "failed", error instanceof Error ? error.message : "Failed to enqueue job");
-      return NextResponse.json(
-        { error: error instanceof Error ? error.message : "Failed to enqueue job" },
-        { status: 500 }
-      );
-    }
-
+    // Job is created with status "queued" - the standalone worker will pick it up
     return NextResponse.json({
       jobId: job.id,
       taskName: job.taskName,

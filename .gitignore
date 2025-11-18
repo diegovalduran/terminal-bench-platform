@@ -26,3 +26,9 @@ frontend/.env*.local
 frontend/uploads/
 frontend/work/
 
+# Worker
+worker/node_modules/
+worker/dist/
+worker/.env*.local
+worker/work/
+

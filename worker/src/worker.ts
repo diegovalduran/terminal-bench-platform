@@ -11,18 +11,27 @@
  *   node dist/worker.js (after building)
  */
 
+// Load environment variables FIRST, before any other imports
 import dotenv from "dotenv";
 import { resolve } from "path";
-import { db } from "../../shared/db/client.js";
-import { jobs } from "../../shared/db/schema.js";
-import { eq } from "drizzle-orm";
-import { jobQueue } from "../../shared/lib/job-queue.js";
-import { validateStartup } from "../../shared/lib/startup-validation.js";
-import { log } from "../../shared/lib/logger.js";
-import { QueuedJob } from "../../shared/types/runs.js";
 
-// Load environment variables
-dotenv.config({ path: resolve(process.cwd(), ".env.local") });
+// Try multiple locations: worker dir, parent dir (project root), frontend dir
+const envPaths = [
+  resolve(process.cwd(), ".env.local"),
+  resolve(process.cwd(), "..", ".env.local"),
+  resolve(process.cwd(), "..", "frontend", ".env.local"),
+];
+
+for (const envPath of envPaths) {
+  dotenv.config({ path: envPath, override: false });
+}
+
+// Import types and utilities that don't depend on env vars
+import { eq } from "drizzle-orm";
+import { QueuedJob } from "./shared/types/runs";
+
+// Dynamic imports for modules that depend on environment variables
+// These will be imported after env vars are loaded
 
 // Poll interval in milliseconds (default: 5 seconds)
 const POLL_INTERVAL_MS = parseInt(
@@ -38,8 +47,15 @@ let pollInterval: NodeJS.Timeout | null = null;
  * Fetch queued jobs from database and enqueue them
  */
 async function processQueuedJobs() {
+  // Dynamically import to ensure env vars are loaded
+  const { db } = await import("./shared/db/client");
+  const { jobs } = await import("./shared/db/schema");
+  const { jobQueue } = await import("./shared/lib/job-queue");
+  const { log } = await import("./shared/lib/logger");
+  const { eq } = await import("drizzle-orm");
+
   if (!db) {
-    log.error(new Error("Database not initialized"), {
+    log.error("Database not initialized", undefined, {
       context: "worker.processQueuedJobs",
     });
     return;
@@ -54,9 +70,18 @@ async function processQueuedJobs() {
       .orderBy(jobs.createdAt);
 
     if (queuedJobs.length === 0) {
+      // Log heartbeat every 10 polls (every ~50 seconds) to show worker is alive
+      const pollCount = (global as any).pollCount = ((global as any).pollCount || 0) + 1;
+      if (pollCount % 10 === 0) {
+        const timestamp = new Date().toISOString().split('T')[1].split('.')[0];
+        process.stdout.write(`\n💓 [${timestamp}] [Worker] Polling... (no queued jobs)\n`);
+      }
       return; // No jobs to process
     }
 
+    const timestamp = new Date().toISOString().split('T')[1].split('.')[0];
+    process.stdout.write(`\n🔍 [${timestamp}] [Worker] Found ${queuedJobs.length} queued job(s)\n`);
+    
     log.info(`Found ${queuedJobs.length} queued job(s)`, {
       context: "worker.processQueuedJobs",
     });
@@ -102,6 +127,9 @@ async function processQueuedJobs() {
         // Enqueue to in-memory queue
         jobQueue.enqueue(queuedJob);
 
+        const timestamp = new Date().toISOString().split('T')[1].split('.')[0];
+        process.stdout.write(`\n📥 [${timestamp}] [Worker] Enqueued job ${job.id.slice(0, 8)}... (${job.taskName})\n`);
+        
         log.info(`Enqueued job ${job.id} (${job.taskName})`, {
           context: "worker.processQueuedJobs",
           jobId: job.id,
@@ -109,21 +137,21 @@ async function processQueuedJobs() {
         });
       } catch (error) {
         log.error(
+          "Failed to enqueue job",
           error instanceof Error ? error : new Error(String(error)),
           {
             context: "worker.processQueuedJobs",
             jobId: job.id,
-            message: "Failed to enqueue job",
           }
         );
       }
     }
   } catch (error) {
     log.error(
+      "Error fetching queued jobs from database",
       error instanceof Error ? error : new Error(String(error)),
       {
         context: "worker.processQueuedJobs",
-        message: "Error fetching queued jobs from database",
       }
     );
   }
@@ -132,22 +160,23 @@ async function processQueuedJobs() {
 /**
  * Start polling for queued jobs
  */
-function startPolling() {
+async function startPolling() {
   if (pollInterval) {
     return; // Already polling
   }
 
+  const { log } = await import("./shared/lib/logger");
   log.info(`Starting worker with poll interval: ${POLL_INTERVAL_MS}ms`, {
     context: "worker.startPolling",
   });
 
   // Process immediately on start
-  processQueuedJobs();
+  await processQueuedJobs();
 
   // Then poll periodically
-  pollInterval = setInterval(() => {
+  pollInterval = setInterval(async () => {
     if (!isShuttingDown) {
-      processQueuedJobs();
+      await processQueuedJobs();
     }
   }, POLL_INTERVAL_MS);
 }
@@ -155,10 +184,11 @@ function startPolling() {
 /**
  * Stop polling and handle graceful shutdown
  */
-function stopPolling() {
+async function stopPolling() {
   if (pollInterval) {
     clearInterval(pollInterval);
     pollInterval = null;
+    const { log } = await import("./shared/lib/logger");
     log.info("Stopped polling for queued jobs", {
       context: "worker.stopPolling",
     });
@@ -174,12 +204,16 @@ async function gracefulShutdown(signal: string) {
   }
 
   isShuttingDown = true;
+  const { log } = await import("./shared/lib/logger");
+  const { jobQueue } = await import("./shared/lib/job-queue");
+  const { db } = await import("./shared/db/client");
+
   log.info(`Received ${signal}, initiating graceful shutdown...`, {
     context: "worker.gracefulShutdown",
   });
 
   // Stop polling
-  stopPolling();
+  await stopPolling();
 
   // Wait for current jobs to complete (with timeout)
   const maxWaitTime = 30000; // 30 seconds
@@ -223,6 +257,12 @@ async function gracefulShutdown(signal: string) {
  * Main entry point
  */
 async function main() {
+  // Dynamically import modules that depend on environment variables
+  const { db } = await import("./shared/db/client");
+  const { jobs } = await import("./shared/db/schema");
+  const { validateStartup } = await import("./shared/lib/startup-validation");
+  const { log } = await import("./shared/lib/logger");
+
   log.info("Starting Terminal-Bench Worker Service...", {
     context: "worker.main",
   });
@@ -233,7 +273,8 @@ async function main() {
   // Check database connection
   if (!db) {
     log.error(
-      new Error("Database not initialized. Check DATABASE_URL environment variable."),
+      "Database not initialized. Check DATABASE_URL environment variable.",
+      undefined,
       {
         context: "worker.main",
       }
@@ -249,10 +290,10 @@ async function main() {
     });
   } catch (error) {
     log.error(
+      "Database connection test failed",
       error instanceof Error ? error : new Error(String(error)),
       {
         context: "worker.main",
-        message: "Database connection test failed",
       }
     );
     process.exit(1);
@@ -263,26 +304,27 @@ async function main() {
   process.on("SIGINT", () => gracefulShutdown("SIGINT"));
 
   // Handle uncaught errors
-  process.on("uncaughtException", (error) => {
-    log.error(error, {
+  process.on("uncaughtException", async (error) => {
+    const { log } = await import("./shared/lib/logger");
+    log.error("Uncaught exception, shutting down", error, {
       context: "worker.uncaughtException",
-      message: "Uncaught exception, shutting down",
     });
-    gracefulShutdown("uncaughtException");
+    await gracefulShutdown("uncaughtException");
   });
 
-  process.on("unhandledRejection", (reason, promise) => {
+  process.on("unhandledRejection", async (reason, promise) => {
+    const { log } = await import("./shared/lib/logger");
     log.error(
+      "Unhandled promise rejection",
       reason instanceof Error ? reason : new Error(String(reason)),
       {
         context: "worker.unhandledRejection",
-        message: "Unhandled promise rejection",
       }
     );
   });
 
   // Start polling for queued jobs
-  startPolling();
+  await startPolling();
 
   log.info("Worker service started successfully", {
     context: "worker.main",
@@ -291,10 +333,10 @@ async function main() {
 }
 
 // Run main function
-main().catch((error) => {
-  log.error(error instanceof Error ? error : new Error(String(error)), {
+main().catch(async (error) => {
+  const { log } = await import("./shared/lib/logger");
+  log.error("Failed to start worker service", error instanceof Error ? error : new Error(String(error)), {
     context: "worker.main",
-    message: "Failed to start worker service",
   });
   process.exit(1);
 });

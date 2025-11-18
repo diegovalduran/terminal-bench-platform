@@ -1,5 +1,5 @@
-import { db } from "@/db/client";
-import { attempts, episodes } from "@/db/schema";
+import { db } from "../db/client.js";
+import { attempts, episodes } from "../db/schema.js";
 import { eq } from "drizzle-orm";
 
 export interface CreateAttemptParams {
