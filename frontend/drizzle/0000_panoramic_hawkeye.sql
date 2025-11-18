@@ -1,4 +1,4 @@
-CREATE TABLE "attempts" (
+CREATE TABLE IF NOT EXISTS "attempts" (
 	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
 	"job_id" uuid NOT NULL,
 	"index" integer NOT NULL,
@@ -12,7 +12,7 @@ CREATE TABLE "attempts" (
 	"metadata" jsonb DEFAULT '{}'::jsonb
 );
 --> statement-breakpoint
-CREATE TABLE "episodes" (
+CREATE TABLE IF NOT EXISTS "episodes" (
 	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
 	"attempt_id" uuid NOT NULL,
 	"index" integer NOT NULL,
@@ -23,7 +23,7 @@ CREATE TABLE "episodes" (
 	"metadata" jsonb DEFAULT '{}'::jsonb
 );
 --> statement-breakpoint
-CREATE TABLE "jobs" (
+CREATE TABLE IF NOT EXISTS "jobs" (
 	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
 	"task_name" varchar(256) NOT NULL,
 	"status" varchar(32) NOT NULL,
@@ -37,5 +37,22 @@ CREATE TABLE "jobs" (
 	"updated_at" timestamp with time zone DEFAULT now() NOT NULL
 );
 --> statement-breakpoint
-ALTER TABLE "attempts" ADD CONSTRAINT "attempts_job_id_jobs_id_fk" FOREIGN KEY ("job_id") REFERENCES "public"."jobs"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
-ALTER TABLE "episodes" ADD CONSTRAINT "episodes_attempt_id_attempts_id_fk" FOREIGN KEY ("attempt_id") REFERENCES "public"."attempts"("id") ON DELETE cascade ON UPDATE no action;
+DO $$ 
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint 
+        WHERE conname = 'attempts_job_id_jobs_id_fk'
+    ) THEN
+        ALTER TABLE "attempts" ADD CONSTRAINT "attempts_job_id_jobs_id_fk" FOREIGN KEY ("job_id") REFERENCES "public"."jobs"("id") ON DELETE cascade ON UPDATE no action;
+    END IF;
+END $$;
+--> statement-breakpoint
+DO $$ 
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint 
+        WHERE conname = 'episodes_attempt_id_attempts_id_fk'
+    ) THEN
+        ALTER TABLE "episodes" ADD CONSTRAINT "episodes_attempt_id_attempts_id_fk" FOREIGN KEY ("attempt_id") REFERENCES "public"."attempts"("id") ON DELETE cascade ON UPDATE no action;
+    END IF;
+END $$;
