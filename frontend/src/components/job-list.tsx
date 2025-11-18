@@ -149,10 +149,19 @@ export function JobList({ jobs }: JobListProps) {
                     {format(new Date(job.createdAt), "MMM d, HH:mm")}
                   </p>
                 </div>
-                <div className="flex shrink-0 items-center gap-2 text-sm text-zinc-600 sm:gap-3">
-                  <span className="hidden sm:inline">
-                    {job.runsCompleted}/{job.runsRequested}
-                  </span>
+                <div className="flex shrink-0 items-center gap-2 sm:gap-3">
+                  <Badge
+                    variant="outline"
+                    className={`hidden text-xs font-semibold sm:inline-flex ${
+                      job.attemptsPassed === job.runsRequested
+                        ? "bg-emerald-50 text-emerald-700 border-emerald-200"
+                        : job.attemptsPassed > 0
+                          ? "bg-amber-50 text-amber-700 border-amber-200"
+                          : "bg-zinc-50 text-zinc-600 border-zinc-200"
+                    }`}
+                  >
+                    {job.attemptsPassed}/{job.runsRequested} Passed
+                  </Badge>
                   <Badge className={`capitalize ${statusLabelStyles[job.status]}`}>
                     {job.status}
                   </Badge>

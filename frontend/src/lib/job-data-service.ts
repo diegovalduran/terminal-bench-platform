@@ -1,6 +1,6 @@
-import { eq, inArray } from "drizzle-orm";
+import { eq, inArray, sql, and, ne, gt } from "drizzle-orm";
 import { db } from "@/db/client";
-import { episodes, jobs } from "@/db/schema";
+import { episodes, jobs, attempts } from "@/db/schema";
 import { JobDetailResponse, JobListResponse } from "@/types/runs";
 
 export async function fetchJobList(userId?: string): Promise<JobListResponse> {
@@ -26,11 +26,41 @@ export async function fetchJobList(userId?: string): Promise<JobListResponse> {
 
   const dbJobs = await query.orderBy(jobs.createdAt);
 
+  // Get job IDs to count attempts passed
+  const jobIds = dbJobs.map((job) => job.id);
+  
+  // Count attempts that passed (testsPassed === testsTotal && testsTotal > 0)
+  // for each job
+  const attemptsPassedCounts = jobIds.length > 0
+    ? await db
+        .select({
+          jobId: attempts.jobId,
+          count: sql<number>`count(*)::int`.as('count'),
+        })
+        .from(attempts)
+        .where(
+          and(
+            inArray(attempts.jobId, jobIds),
+            gt(attempts.testsTotal, 0),
+            eq(attempts.testsPassed, attempts.testsTotal),
+            ne(attempts.status, 'running'),
+            ne(attempts.status, 'queued')
+          )
+        )
+        .groupBy(attempts.jobId)
+    : [];
+
+  // Create a map for quick lookup
+  const attemptsPassedMap = new Map(
+    attemptsPassedCounts.map((item) => [item.jobId, item.count])
+  );
+
   return {
     jobs: dbJobs.map((job) => ({
       ...job,
       status: job.status as JobListResponse["jobs"][number]["status"],
       createdAt: job.createdAt.toISOString(),
+      attemptsPassed: attemptsPassedMap.get(job.id) ?? 0,
     })),
   };
 }

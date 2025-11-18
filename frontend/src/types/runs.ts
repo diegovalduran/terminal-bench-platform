@@ -56,6 +56,7 @@ export interface JobListItem {
   status: JobStatus;
   runsRequested: number;
   runsCompleted: number;
+  attemptsPassed: number;
   createdAt: string;
 }
 

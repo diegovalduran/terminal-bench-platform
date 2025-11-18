@@ -10,6 +10,7 @@ import { ErrorState } from "@/components/error-state";
 import { JobDetailSkeleton } from "@/components/loading-skeleton";
 import { Separator } from "@/components/ui/separator";
 import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
 import { ArrowLeft, XCircle, Loader2 } from "lucide-react";
 
 interface JobDetailPageProps {
@@ -89,27 +90,57 @@ export default function JobDetailPage({ params }: JobDetailPageProps) {
 
   const isRunning = job.status === "running" || job.status === "queued";
 
+  // Calculate how many attempts passed (Agent Passed = all tests passed)
+  const attemptsPassed = job.attempts.filter(
+    (attempt) =>
+      attempt.status !== "running" &&
+      attempt.status !== "queued" &&
+      attempt.testsTotal > 0 &&
+      attempt.testsPassed === attempt.testsTotal
+  ).length;
+  const totalCompletedAttempts = job.attempts.filter(
+    (attempt) => attempt.status !== "running" && attempt.status !== "queued"
+  ).length;
+
   return (
     <div className="min-h-screen bg-zinc-50 py-10">
       <div className="mx-auto flex max-w-5xl flex-col gap-8 px-4 md:px-6">
         <header className="space-y-3">
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={() => router.push("/")}
-            className="mb-2 -ml-2 w-fit text-zinc-600 hover:text-zinc-900"
-          >
-            <ArrowLeft className="mr-2 h-4 w-4" />
-            Back to Home
-          </Button>
-          <p className="text-sm font-medium uppercase tracking-[0.3em] text-zinc-500">
-            Job Detail
-          </p>
+          <div className="flex items-center justify-between">
+            <p className="text-sm font-medium uppercase tracking-[0.3em] text-zinc-500">
+              Job Detail
+            </p>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => router.push("/")}
+              className="text-zinc-600 hover:text-zinc-900"
+            >
+              <ArrowLeft className="mr-2 h-4 w-4" />
+              Back to Home
+            </Button>
+          </div>
           <div className="flex items-start justify-between gap-4">
-            <div>
-              <h1 className="text-3xl font-semibold text-zinc-900">
-                {job.taskName}
-              </h1>
+            <div className="space-y-2">
+              <div className="flex items-center gap-3">
+                <h1 className="text-3xl font-semibold text-zinc-900">
+                  {job.taskName}
+                </h1>
+                {/* Score badge showing attempts passed */}
+                {totalCompletedAttempts > 0 && (
+                  <Badge
+                    className={`text-sm font-semibold ${
+                      attemptsPassed === totalCompletedAttempts
+                        ? "bg-emerald-100 text-emerald-800"
+                        : attemptsPassed > 0
+                          ? "bg-amber-100 text-amber-800"
+                          : "bg-rose-100 text-rose-800"
+                    }`}
+                  >
+                    {attemptsPassed}/{totalCompletedAttempts} Passed
+                  </Badge>
+                )}
+              </div>
               <p className="text-sm text-zinc-500">Job ID: {job.id}</p>
             </div>
             {isRunning && (

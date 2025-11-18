@@ -196,7 +196,17 @@ export function AttemptCard({ attempt, jobId }: AttemptCardProps) {
             </DropdownMenu>
           )}
           <Badge
-            className={`capitalize ${attemptStatusColor[attempt.status]} hover:${attemptStatusColor[attempt.status]}`}
+            className={`capitalize ${
+              // If we have test results (testsTotal > 0), show green even if status is "failed"
+              // This indicates the attempt completed and we were able to parse results
+              attempt.status !== "running" && attempt.status !== "queued" && attempt.testsTotal > 0
+                ? "bg-emerald-100 text-emerald-800"
+                : attemptStatusColor[attempt.status]
+            } hover:${
+              attempt.status !== "running" && attempt.status !== "queued" && attempt.testsTotal > 0
+                ? "bg-emerald-100 text-emerald-800"
+                : attemptStatusColor[attempt.status]
+            }`}
           >
             {attempt.status === "success" || attempt.status === "failed" ? "completed" : attempt.status}
           </Badge>
@@ -230,34 +240,23 @@ export function AttemptCard({ attempt, jobId }: AttemptCardProps) {
                     const isPassed = testCase.status === "passed";
                     const isFailed = testCase.status === "failed" || testCase.status === "call_failed";
                     
-                    return (
-                      <Accordion key={`test-${idx}`} type="single" collapsible>
-                        <AccordionItem value={`test-${idx}`} className="border-none">
-                          <div className="rounded-lg border border-zinc-200 bg-white transition-colors hover:bg-zinc-50">
-                            <AccordionTrigger className="px-4 py-3 hover:no-underline">
-                              <div className="flex w-full items-center justify-between pr-4">
-                                <span className="flex-1 text-left font-mono text-sm font-medium text-zinc-800">
-                                  {testCase.name}
-                                </span>
-                                {isPassed ? (
-                                  <div className="flex items-center gap-2 text-emerald-600">
-                                    <CheckCircle2 className="h-5 w-5" />
-                                    <span className="text-sm font-semibold">Passed</span>
-                                  </div>
-                                ) : isFailed ? (
+                    // Only make failed tests collapsible
+                    if (isFailed && (testCase.trace || testCase.message)) {
+                      return (
+                        <Accordion key={`test-${idx}`} type="single" collapsible>
+                          <AccordionItem value={`test-${idx}`} className="border-none">
+                            <div className="rounded-lg border border-zinc-200 bg-white transition-colors hover:bg-zinc-50">
+                              <AccordionTrigger className="px-4 py-3 hover:no-underline">
+                                <div className="flex w-full items-center justify-between pr-4">
+                                  <span className="flex-1 text-left font-mono text-sm font-medium text-zinc-800">
+                                    {testCase.name}
+                                  </span>
                                   <div className="flex items-center gap-2 text-rose-600">
                                     <XCircle className="h-5 w-5" />
                                     <span className="text-sm font-semibold">Failed</span>
                                   </div>
-                                ) : (
-                                  <div className="flex items-center gap-2 text-zinc-500">
-                                    <AlertCircle className="h-5 w-5" />
-                                    <span className="text-sm font-semibold capitalize">{testCase.status}</span>
-                                  </div>
-                                )}
-                              </div>
-                            </AccordionTrigger>
-                            {(testCase.trace || testCase.message) && (
+                                </div>
+                              </AccordionTrigger>
                               <AccordionContent className="px-4 pb-3">
                                 <div className="space-y-2 rounded-lg border border-zinc-200 bg-zinc-50 p-3">
                                   {testCase.message && (
@@ -276,10 +275,33 @@ export function AttemptCard({ attempt, jobId }: AttemptCardProps) {
                                   )}
                                 </div>
                               </AccordionContent>
-                            )}
+                            </div>
+                          </AccordionItem>
+                        </Accordion>
+                      );
+                    }
+                    
+                    // Passed tests and tests without trace/message are displayed as simple static items
+                    return (
+                      <div
+                        key={`test-${idx}`}
+                        className="flex items-center justify-between gap-4 rounded-lg border border-zinc-200 bg-white px-4 py-3 transition-colors hover:bg-zinc-50"
+                      >
+                        <span className="flex-1 font-mono text-sm font-medium text-zinc-800">
+                          {testCase.name}
+                        </span>
+                        {isPassed ? (
+                          <div className="flex items-center gap-2 text-emerald-600">
+                            <CheckCircle2 className="h-5 w-5" />
+                            <span className="text-sm font-semibold">Passed</span>
                           </div>
-                        </AccordionItem>
-                      </Accordion>
+                        ) : (
+                          <div className="flex items-center gap-2 text-zinc-500">
+                            <AlertCircle className="h-5 w-5" />
+                            <span className="text-sm font-semibold capitalize">{testCase.status}</span>
+                          </div>
+                        )}
+                      </div>
                     );
                   })
                 ) : attempt.rewardSummary && Object.keys(attempt.rewardSummary).length > 0 ? (
@@ -335,12 +357,12 @@ export function AttemptCard({ attempt, jobId }: AttemptCardProps) {
                   <AccordionItem key={episode.id} value={episode.id} className="border-none">
                     <div className="rounded-lg border border-zinc-200 bg-white transition-colors hover:bg-zinc-50">
                       <AccordionTrigger className="px-4 py-3 hover:no-underline">
-                        <div className="text-left">
-                          <p className="text-sm font-semibold text-zinc-900">
+                        <div className="flex w-full items-start gap-3 text-left">
+                          <p className="text-sm font-semibold text-zinc-900 whitespace-nowrap">
                             Episode {episode.index}
                           </p>
-                          <p className="text-xs text-zinc-500">
-                            {episode.stateAnalysis.slice(0, 80)}…
+                          <p className="text-xs text-zinc-500 flex-1 min-w-0">
+                            {episode.stateAnalysis.slice(0, 120)}…
                           </p>
                         </div>
                       </AccordionTrigger>
