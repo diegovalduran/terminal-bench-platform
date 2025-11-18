@@ -18,22 +18,37 @@ export default function LoginPage() {
     setIsLoading(true);
 
     try {
+      console.log("[Login] Attempting sign in for:", email);
       const result = await signIn("credentials", {
         email,
         password,
         redirect: false,
       });
 
+      console.log("[Login] Sign in result:", {
+        error: result?.error,
+        ok: result?.ok,
+        status: result?.status,
+        url: result?.url,
+      });
+
       if (result?.error) {
+        console.error("[Login] Sign in error:", result.error);
         toast.error("Invalid email or password");
         setIsLoading(false);
-      } else {
+      } else if (result?.ok) {
+        console.log("[Login] Sign in successful, redirecting...");
         toast.success("Logged in successfully");
         // Use window.location for a full page reload to ensure session cookie is set
         // This ensures the middleware sees the authenticated session
         window.location.href = "/";
+      } else {
+        console.warn("[Login] Unexpected sign in result:", result);
+        toast.error("Login failed. Please try again.");
+        setIsLoading(false);
       }
     } catch (error) {
+      console.error("[Login] Exception during login:", error);
       toast.error("An error occurred during login");
       setIsLoading(false);
     }

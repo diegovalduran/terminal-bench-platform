@@ -14,7 +14,14 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
         password: { label: "Password", type: "password" },
       },
       async authorize(credentials) {
+        console.log("[Auth] Authorize called", {
+          hasEmail: !!credentials?.email,
+          hasPassword: !!credentials?.password,
+          env: process.env.NODE_ENV,
+        });
+
         if (!credentials?.email || !credentials?.password) {
+          console.log("[Auth] Missing credentials");
           return null;
         }
 
@@ -26,38 +33,46 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
         const email = credentials.email as string;
         const password = credentials.password as string;
 
-        // Find user by email
-        const userList = await db
-          .select()
-          .from(users)
-          .where(eq(users.email, email))
-          .limit(1);
+        try {
+          // Find user by email
+          console.log("[Auth] Looking up user:", email);
+          const userList = await db
+            .select()
+            .from(users)
+            .where(eq(users.email, email))
+            .limit(1);
 
-        const user = userList[0];
-        if (!user || !user.password) {
+          const user = userList[0];
+          if (!user || !user.password) {
+            console.log("[Auth] User not found or no password");
+            return null;
+          }
+
+          // Verify password
+          console.log("[Auth] Verifying password");
+          const isValid = await bcrypt.compare(password, user.password);
+
+          if (!isValid) {
+            console.log("[Auth] Invalid password");
+            return null;
+          }
+
+          console.log("[Auth] Authentication successful for:", email);
+          return {
+            id: user.id,
+            email: user.email,
+            name: user.name,
+          };
+        } catch (error) {
+          console.error("[Auth] Error during authorization:", error);
           return null;
         }
-
-        // Verify password
-        const isValid = await bcrypt.compare(
-          password,
-          user.password
-        );
-
-        if (!isValid) {
-          return null;
-        }
-
-        return {
-          id: user.id,
-          email: user.email,
-          name: user.name,
-        };
       },
     }),
   ],
   session: {
     strategy: "jwt",
+    maxAge: 30 * 24 * 60 * 60, // 30 days
   },
   pages: {
     signIn: "/login",
@@ -65,6 +80,7 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
   callbacks: {
     async jwt({ token, user }) {
       if (user) {
+        console.log("[Auth] JWT callback - adding user to token:", user.email);
         token.id = user.id;
         token.email = user.email;
         token.name = user.name;
@@ -73,6 +89,7 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
     },
     async session({ session, token }) {
       if (session.user) {
+        console.log("[Auth] Session callback - creating session for:", token.email);
         session.user.id = token.id as string;
         session.user.email = token.email as string;
         session.user.name = token.name as string;
@@ -81,5 +98,17 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
     },
   },
   secret: process.env.NEXTAUTH_SECRET,
+  cookies: {
+    sessionToken: {
+      name: `${process.env.NODE_ENV === "production" ? "__Secure-" : ""}next-auth.session-token`,
+      options: {
+        httpOnly: true,
+        sameSite: "lax",
+        path: "/",
+        secure: process.env.NODE_ENV === "production",
+      },
+    },
+  },
+  debug: process.env.NODE_ENV === "development",
 });
 
