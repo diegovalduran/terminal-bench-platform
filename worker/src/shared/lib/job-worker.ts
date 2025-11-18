@@ -431,8 +431,21 @@ async function parseTrajectory(trialDir: string): Promise<{
       };
     }
     
-    // Try trajectory.json for real LLM agents
-    const trajectoryContent = await readFile(trajectoryPath, "utf-8");
+    // Try trajectory.json for real LLM agents (with error handling)
+    const trajectoryContent = await readFile(trajectoryPath, "utf-8").catch(() => null);
+    if (!trajectoryContent) {
+      // Neither oracle.txt nor trajectory.json exists
+      console.log(`[Worker] No trajectory file found (neither oracle.txt nor trajectory.json)`);
+      return {
+        episodes: [{
+          stateAnalysis: "No trajectory available",
+          explanation: "Agent output files not found",
+          commands: [],
+        }],
+        totalDurationMs: 0,
+      };
+    }
+    
     const trajectory: Trajectory = JSON.parse(trajectoryContent);
     
     const episodes: Array<{
