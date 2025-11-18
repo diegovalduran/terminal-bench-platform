@@ -100,7 +100,27 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
   secret: process.env.NEXTAUTH_SECRET,
   cookies: {
     sessionToken: {
-      name: `${process.env.NODE_ENV === "production" ? "__Secure-" : ""}next-auth.session-token`,
+      name: `next-auth.session-token`,
+      options: {
+        httpOnly: true,
+        sameSite: "lax",
+        path: "/",
+        secure: process.env.NODE_ENV === "production",
+        // Don't set domain - let browser handle it
+        // domain is automatically set by browser to current domain
+      },
+    },
+    callbackUrl: {
+      name: `next-auth.callback-url`,
+      options: {
+        httpOnly: true,
+        sameSite: "lax",
+        path: "/",
+        secure: process.env.NODE_ENV === "production",
+      },
+    },
+    csrfToken: {
+      name: `next-auth.csrf-token`,
       options: {
         httpOnly: true,
         sameSite: "lax",

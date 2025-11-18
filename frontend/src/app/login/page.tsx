@@ -37,8 +37,14 @@ export default function LoginPage() {
         toast.error("Invalid email or password");
         setIsLoading(false);
       } else if (result?.ok) {
-        console.log("[Login] Sign in successful, redirecting...");
+        console.log("[Login] Sign in successful, waiting for cookie to be set...");
         toast.success("Logged in successfully");
+        
+        // Wait a moment for the cookie to be set before redirecting
+        // This ensures the session cookie is available when the page loads
+        await new Promise(resolve => setTimeout(resolve, 1000));
+        
+        console.log("[Login] Redirecting to home page...");
         // Use window.location for a full page reload to ensure session cookie is set
         // This ensures the middleware sees the authenticated session
         window.location.href = "/";
