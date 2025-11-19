@@ -19,7 +19,8 @@ interface QueueStatus {
 
 interface UserQueueStatus {
   hasActiveJob: boolean;
-  activeJobId: string | null;
+  activeJobCount: number;
+  maxActivePerUser: number;
   queuedCount: number;
   maxQueued: number;
   canQueueMore: boolean;
@@ -101,15 +102,15 @@ export function QueueStatus() {
             <div className="text-xs font-medium text-zinc-700">Your Queue</div>
             <div className="space-y-1 text-xs">
               <div className="flex items-center justify-between">
-                <span className="text-zinc-600">Active job</span>
+                <span className="text-zinc-600">Active jobs</span>
                 <Badge
                   className={
-                    user.hasActiveJob
+                    user.activeJobCount > 0
                       ? "bg-emerald-100 text-emerald-800"
                       : "bg-zinc-100 text-zinc-600"
                   }
                 >
-                  {user.hasActiveJob ? "Yes" : "None"}
+                  {user.activeJobCount}/{user.maxActivePerUser}
                 </Badge>
               </div>
               <div className="flex items-center justify-between">

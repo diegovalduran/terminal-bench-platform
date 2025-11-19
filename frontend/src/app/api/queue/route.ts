@@ -45,17 +45,18 @@ export async function GET(request: NextRequest) {
     let userStatus = null;
     if (session?.user?.id) {
       const userJobs = allJobs.filter((j) => j.ownerId === session.user.id);
-      const hasActiveJob = userJobs.some((j) => j.status === "running");
+      const activeCount = userJobs.filter((j) => j.status === "running").length;
       const userQueuedCount = userJobs.filter((j) => j.status === "queued").length;
+      const maxActive = 5;
       const maxQueued = 5;
 
       userStatus = {
-        hasActiveJob,
+        hasActiveJob: activeCount > 0,
+        activeJobCount: activeCount,
+        maxActivePerUser: maxActive,
         queuedCount: userQueuedCount,
         maxQueued,
-        canQueueMore: hasActiveJob
-          ? userQueuedCount < maxQueued
-          : userQueuedCount < maxQueued,
+        canQueueMore: activeCount < maxActive && userQueuedCount < maxQueued,
       };
     }
     

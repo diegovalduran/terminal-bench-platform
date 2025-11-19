@@ -62,19 +62,27 @@ export async function POST(request: NextRequest) {
         )
       );
 
-    const hasActiveJob = userJobs.some((j) => j.status === "running");
+    const activeCount = userJobs.filter((j) => j.status === "running").length;
     const queuedCount = userJobs.filter((j) => j.status === "queued").length;
+    const maxActive = 5;
     const maxQueued = 5;
 
     // Check if user can queue more jobs
-    if (hasActiveJob && queuedCount >= maxQueued) {
+    if (activeCount >= maxActive && queuedCount >= maxQueued) {
       return NextResponse.json(
         { 
-          error: `You already have an active job and ${queuedCount} queued jobs. Maximum is ${maxQueued} queued jobs. Please wait for your current jobs to complete.` 
+          error: `You already have ${activeCount} active jobs and ${queuedCount} queued jobs. Maximum is ${maxActive} active and ${maxQueued} queued jobs. Please wait for your current jobs to complete.` 
         },
         { status: 429 }
       );
-    } else if (!hasActiveJob && queuedCount >= maxQueued) {
+    } else if (activeCount >= maxActive) {
+      return NextResponse.json(
+        { 
+          error: `You already have ${activeCount} active jobs (maximum ${maxActive}). This job will be queued.` 
+        },
+        { status: 429 }
+      );
+    } else if (queuedCount >= maxQueued) {
       return NextResponse.json(
         { 
           error: `You have ${queuedCount} queued jobs. Maximum is ${maxQueued} queued jobs. Please wait for your jobs to start processing.` 

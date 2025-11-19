@@ -88,21 +88,17 @@ async function processQueuedJobs() {
 
     // Enqueue each job
     for (const job of queuedJobs) {
-      // Skip if already in queue or processing
-      const queueStatus = jobQueue.getStatus();
-      const isAlreadyProcessing =
-        queueStatus.activeByUser[job.ownerId || ""] === job.id;
-
-      if (isAlreadyProcessing) {
-        log.debug(`Job ${job.id} already processing, skipping`, {
-          context: "worker.processQueuedJobs",
-        });
-        continue;
-      }
-
       // Check user queue status before enqueueing
       if (job.ownerId) {
         const userQueueStatus = jobQueue.getUserQueueStatus(job.ownerId);
+        
+        // Skip if this specific job is already active for this user
+        if (userQueueStatus.activeJobIds?.includes(job.id)) {
+          log.debug(`Job ${job.id} already processing for user, skipping`, {
+            context: "worker.processQueuedJobs",
+          });
+          continue;
+        }
         if (!userQueueStatus.canQueueMore) {
           log.debug(
             `User ${job.ownerId} has reached queue limit, skipping job ${job.id}`,
