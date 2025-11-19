@@ -32,7 +32,7 @@ This uses `tsx` to run TypeScript directly without compilation.
 npm install -g pm2
 
 # Start the worker
-pm2 start ecosystem.config.js
+pm2 start ecosystem.config.cjs
 
 # View logs
 pm2 logs terminal-bench-worker
@@ -158,7 +158,7 @@ The worker automatically detects and handles OpenAI rate limit errors:
 2. Clone repository
 3. Install dependencies: `npm install`
 4. Set up environment variables in `.env.local`
-5. Start worker with PM2: `pm2 start ecosystem.config.js`
+5. Start worker with PM2: `pm2 start ecosystem.config.cjs`
 6. Set PM2 to start on boot: `pm2 startup` and follow instructions
 
 ### Docker Deployment (Future)

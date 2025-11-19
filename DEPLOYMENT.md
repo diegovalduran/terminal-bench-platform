@@ -79,18 +79,18 @@ S3_SECRET_ACCESS_KEY=your-secret-access-key
 OPENAI_API_KEY=your-openai-api-key
 HARBOR_MODEL=gpt-5-mini
 
-# Worker Configuration
-WORKER_POLL_INTERVAL_MS=5000
-MAX_CONCURRENT_ATTEMPTS_PER_JOB=10
-ATTEMPT_STAGGER_DELAY_MS=2000
-HARBOR_TIMEOUT_MS=1800000
+# Worker Configuration (Optional - all have defaults)
+# WORKER_POLL_INTERVAL_MS=5000  # Default: 5000ms (5 seconds)
+# MAX_CONCURRENT_ATTEMPTS_PER_JOB=10  # Default: 10 (or 5 for cheaper models)
+# ATTEMPT_STAGGER_DELAY_MS=2000  # Default: 2000ms (2 seconds)
+# HARBOR_TIMEOUT_MS=1800000  # Default: 1800000ms (30 minutes)
 ```
 
 ### 5. Start the Worker
 
 ```bash
 cd ~/terminal-bench-platform/worker
-pm2 start ecosystem.config.js
+pm2 start ecosystem.config.cjs
 ```
 
 ### 6. Enable PM2 on Boot
@@ -291,7 +291,7 @@ Make sure you're in the virtual environment when running Harbor.
 If the worker uses too much memory:
 
 1. Reduce `MAX_CONCURRENT_ATTEMPTS_PER_JOB` in `.env.local`
-2. PM2 will auto-restart if memory exceeds 2GB (configured in `ecosystem.config.js`)
+2. PM2 will auto-restart if memory exceeds 2GB (configured in `ecosystem.config.cjs`)
 
 ### Rate Limit Errors
 

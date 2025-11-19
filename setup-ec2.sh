@@ -202,11 +202,12 @@ S3_SECRET_ACCESS_KEY=your-secret-access-key
 OPENAI_API_KEY=your-openai-api-key
 HARBOR_MODEL=gpt-5-mini
 
-# Worker Configuration
-WORKER_POLL_INTERVAL_MS=5000
-MAX_CONCURRENT_ATTEMPTS_PER_JOB=10
-ATTEMPT_STAGGER_DELAY_MS=2000
-HARBOR_TIMEOUT_MS=1800000
+# Worker Configuration (Optional - all have defaults)
+# Uncomment and modify only if you want to override defaults:
+# WORKER_POLL_INTERVAL_MS=5000  # Default: 5000ms (5 seconds)
+# MAX_CONCURRENT_ATTEMPTS_PER_JOB=10  # Default: 10 (or 5 for cheaper models)
+# ATTEMPT_STAGGER_DELAY_MS=2000  # Default: 2000ms (2 seconds)
+# HARBOR_TIMEOUT_MS=1800000  # Default: 1800000ms (30 minutes)
 EOF
     print_status "Environment file template created at worker/.env.local"
     print_warning "Please edit worker/.env.local and fill in your actual values"
@@ -244,7 +245,7 @@ echo "   nano $PROJECT_DIR/worker/.env.local"
 echo ""
 echo "2. Start the worker with PM2:"
 echo "   cd $PROJECT_DIR/worker"
-echo "   pm2 start ecosystem.config.js"
+echo "   pm2 start ecosystem.config.cjs"
 echo ""
 echo "3. Enable PM2 on boot (run the command shown above):"
 echo "   (This ensures the worker restarts if the server reboots)"

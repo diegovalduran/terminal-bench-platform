@@ -28,7 +28,7 @@ for (const envPath of envPaths) {
 
 // Import types and utilities that don't depend on env vars
 import { eq } from "drizzle-orm";
-import { QueuedJob } from "./shared/types/runs";
+import { QueuedJob } from "./shared/types/runs.js";
 
 // Dynamic imports for modules that depend on environment variables
 // These will be imported after env vars are loaded
@@ -48,10 +48,10 @@ let pollInterval: NodeJS.Timeout | null = null;
  */
 async function processQueuedJobs() {
   // Dynamically import to ensure env vars are loaded
-  const { db } = await import("./shared/db/client");
-  const { jobs } = await import("./shared/db/schema");
-  const { jobQueue } = await import("./shared/lib/job-queue");
-  const { log } = await import("./shared/lib/logger");
+  const { db } = await import("./shared/db/client.js");
+  const { jobs } = await import("./shared/db/schema.js");
+  const { jobQueue } = await import("./shared/lib/job-queue.js");
+  const { log } = await import("./shared/lib/logger.js");
   const { eq } = await import("drizzle-orm");
 
   if (!db) {
@@ -161,7 +161,7 @@ async function startPolling() {
     return; // Already polling
   }
 
-  const { log } = await import("./shared/lib/logger");
+  const { log } = await import("./shared/lib/logger.js");
   log.info(`Starting worker with poll interval: ${POLL_INTERVAL_MS}ms`, {
     context: "worker.startPolling",
   });
@@ -184,7 +184,7 @@ async function stopPolling() {
   if (pollInterval) {
     clearInterval(pollInterval);
     pollInterval = null;
-    const { log } = await import("./shared/lib/logger");
+    const { log } = await import("./shared/lib/logger.js");
     log.info("Stopped polling for queued jobs", {
       context: "worker.stopPolling",
     });
@@ -200,9 +200,9 @@ async function gracefulShutdown(signal: string) {
   }
 
   isShuttingDown = true;
-  const { log } = await import("./shared/lib/logger");
-  const { jobQueue } = await import("./shared/lib/job-queue");
-  const { db } = await import("./shared/db/client");
+  const { log } = await import("./shared/lib/logger.js");
+  const { jobQueue } = await import("./shared/lib/job-queue.js");
+  const { db } = await import("./shared/db/client.js");
 
   log.info(`Received ${signal}, initiating graceful shutdown...`, {
     context: "worker.gracefulShutdown",
@@ -254,10 +254,10 @@ async function gracefulShutdown(signal: string) {
  */
 async function main() {
   // Dynamically import modules that depend on environment variables
-  const { db } = await import("./shared/db/client");
-  const { jobs } = await import("./shared/db/schema");
-  const { validateStartup } = await import("./shared/lib/startup-validation");
-  const { log } = await import("./shared/lib/logger");
+  const { db } = await import("./shared/db/client.js");
+  const { jobs } = await import("./shared/db/schema.js");
+  const { validateStartup } = await import("./shared/lib/startup-validation.js");
+  const { log } = await import("./shared/lib/logger.js");
 
   log.info("Starting Terminal-Bench Worker Service...", {
     context: "worker.main",
@@ -301,7 +301,7 @@ async function main() {
 
   // Handle uncaught errors
   process.on("uncaughtException", async (error) => {
-    const { log } = await import("./shared/lib/logger");
+    const { log } = await import("./shared/lib/logger.js");
     log.error("Uncaught exception, shutting down", error, {
       context: "worker.uncaughtException",
     });
@@ -309,7 +309,7 @@ async function main() {
   });
 
   process.on("unhandledRejection", async (reason, promise) => {
-    const { log } = await import("./shared/lib/logger");
+    const { log } = await import("./shared/lib/logger.js");
     log.error(
       "Unhandled promise rejection",
       reason instanceof Error ? reason : new Error(String(reason)),
@@ -330,7 +330,7 @@ async function main() {
 
 // Run main function
 main().catch(async (error) => {
-  const { log } = await import("./shared/lib/logger");
+  const { log } = await import("./shared/lib/logger.js");
   log.error("Failed to start worker service", error instanceof Error ? error : new Error(String(error)), {
     context: "worker.main",
   });

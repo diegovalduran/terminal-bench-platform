@@ -5,7 +5,7 @@
  * PM2 is a process manager that keeps the worker alive and restarts it on crashes.
  * 
  * Usage:
- *   pm2 start ecosystem.config.js
+ *   pm2 start ecosystem.config.cjs
  *   pm2 stop worker
  *   pm2 restart worker
  *   pm2 logs worker
