@@ -9,7 +9,7 @@ const execAsync = promisify(exec);
 
 /**
  * Build Docker image once for a task
- * Uses docker compose to build the image with the same approach Harbor uses
+ * Uses docker build to build the image
  * @param taskDir - Path to the task directory containing Dockerfile
  * @param imageName - Name to tag the built image (e.g., "hb__build-cython-ext:latest")
  * @returns Promise that resolves when image is built
@@ -20,28 +20,52 @@ export async function buildDockerImage(
 ): Promise<void> {
   logImmediate('🐳', `Building Docker image: ${imageName}`);
   
-  const dockerfilePath = join(taskDir, "Dockerfile");
+  // Check multiple possible Dockerfile locations
+  // Terminal-Bench 2.0 standard location is environment/Dockerfile
+  const possibleDockerfilePaths = [
+    join(taskDir, "environment", "Dockerfile"), // Terminal-Bench 2.0 standard location
+    join(taskDir, "Dockerfile"), // Root level (fallback)
+  ];
   
-  // Check if Dockerfile exists
-  try {
-    await readFile(dockerfilePath, "utf-8");
-  } catch (error) {
-    throw new Error(`Dockerfile not found at ${dockerfilePath}`);
+  let dockerfilePath: string | null = null;
+  let dockerfileDir: string | null = null;
+  
+  // Find which Dockerfile exists
+  for (const path of possibleDockerfilePaths) {
+    try {
+      await readFile(path, "utf-8");
+      dockerfilePath = path;
+      dockerfileDir = join(path, ".."); // Directory containing the Dockerfile
+      logImmediate('📄', `Found Dockerfile at: ${path}`);
+      break;
+    } catch {
+      // Try next location
+      continue;
+    }
   }
   
-  // Build the image using docker build (simpler than docker compose for our use case)
-  // We use the same image naming convention as Harbor: hb__{task_name}
+  if (!dockerfilePath || !dockerfileDir) {
+    throw new Error(
+      `Dockerfile not found. Checked: ${possibleDockerfilePaths.join(", ")}`
+    );
+  }
+  
+  // Build the image using docker build
+  // Use -f to explicitly specify Dockerfile path
+  // Build context is the directory containing the Dockerfile
   const buildCommand = [
     "docker",
     "build",
+    "-f",
+    dockerfilePath, // Explicitly specify Dockerfile path
     "-t",
     imageName,
-    taskDir,
+    dockerfileDir, // Build context is the directory containing the Dockerfile
   ].join(" ");
   
   try {
     const { stdout, stderr } = await execAsync(buildCommand, {
-      cwd: taskDir,
+      cwd: dockerfileDir,
       maxBuffer: 10 * 1024 * 1024, // 10MB buffer for build output
     });
     
