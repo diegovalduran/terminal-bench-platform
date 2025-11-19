@@ -197,18 +197,29 @@ export function AttemptCard({ attempt, jobId }: AttemptCardProps) {
           )}
           <Badge
             className={`capitalize ${
-              // If we have test results (testsTotal > 0), show green even if status is "failed"
-              // This indicates the attempt completed and we were able to parse results
-              attempt.status !== "running" && attempt.status !== "queued" && attempt.testsTotal > 0
-                ? "bg-emerald-100 text-emerald-800"
-                : attemptStatusColor[attempt.status]
+              // If 0/0 tests, show red "Failed" (agent didn't run or crashed)
+              attempt.status !== "running" && attempt.status !== "queued" && attempt.testsTotal === 0
+                ? "bg-rose-100 text-rose-800"
+                : // If we have test results (testsTotal > 0), show green even if status is "failed"
+                // This indicates the attempt completed and we were able to parse results
+                attempt.status !== "running" && attempt.status !== "queued" && attempt.testsTotal > 0
+                  ? "bg-emerald-100 text-emerald-800"
+                  : attemptStatusColor[attempt.status]
             } hover:${
-              attempt.status !== "running" && attempt.status !== "queued" && attempt.testsTotal > 0
-                ? "bg-emerald-100 text-emerald-800"
-                : attemptStatusColor[attempt.status]
+              attempt.status !== "running" && attempt.status !== "queued" && attempt.testsTotal === 0
+                ? "bg-rose-100 text-rose-800"
+                : attempt.status !== "running" && attempt.status !== "queued" && attempt.testsTotal > 0
+                  ? "bg-emerald-100 text-emerald-800"
+                  : attemptStatusColor[attempt.status]
             }`}
           >
-            {attempt.status === "success" || attempt.status === "failed" ? "completed" : attempt.status}
+            {attempt.status === "running" || attempt.status === "queued"
+              ? attempt.status
+              : attempt.testsTotal === 0
+                ? "Failed" // 0/0 means agent didn't run or crashed
+                : attempt.status === "success" || attempt.status === "failed"
+                  ? "completed" // Has test results, so it completed
+                  : attempt.status}
           </Badge>
         </div>
       </CardHeader>
