@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { cookies } from "next/headers";
 
-const SITE_PASSWORD = "daquiery";
+const SITE_PASSWORD = process.env.SITE_PASSWORD || "daiquiri";
 const PASSWORD_COOKIE_NAME = "site-access";
 const COOKIE_MAX_AGE = 30 * 24 * 60 * 60; // 30 days
 

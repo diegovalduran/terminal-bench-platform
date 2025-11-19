@@ -95,6 +95,7 @@ Enable multiple users to upload and run multiple tasks concurrently without inte
    # - S3_ACCESS_KEY_ID: AWS access key
    # - S3_SECRET_ACCESS_KEY: AWS secret key
    # - OPENAI_API_KEY: (Optional) For Terminus 2 agent
+   # - SITE_PASSWORD: (Optional) Site-wide password protection (default: "daiquiri")
    ```
 
 3. **Setup database**:
