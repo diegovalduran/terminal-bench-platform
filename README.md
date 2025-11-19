@@ -194,3 +194,25 @@ Job metadata and attempt summaries are stored in PostgreSQL:
 
 See `GOAL1_ANALYSIS.md` for detailed output structure documentation.
 
+## Deployment
+
+### EC2 Worker Service
+
+The worker service runs independently on an EC2 instance and processes jobs from the database queue.
+
+**Quick Start:**
+
+1. Launch an EC2 instance (recommended: x1e.8xlarge or larger)
+2. SSH into the instance
+3. Run the setup script:
+   ```bash
+   git clone https://github.com/diegovalduran/terminal-bench-platform.git
+   cd terminal-bench-platform
+   chmod +x setup-ec2.sh
+   ./setup-ec2.sh
+   ```
+4. Configure environment variables in `worker/.env.local`
+5. Start the worker: `cd worker && pm2 start ecosystem.config.js`
+
+For detailed deployment instructions, see [DEPLOYMENT.md](./DEPLOYMENT.md).
+

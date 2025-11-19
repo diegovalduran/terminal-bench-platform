@@ -12,6 +12,7 @@ import { runHarborCommand } from "./utils/harbor-execution.js";
 import { parseTrajectory, HarborTrialResult } from "./utils/trajectory-parser.js";
 import { recoverPartialData } from "./utils/data-recovery.js";
 import { logImmediate } from "./utils/logger.js";
+import { buildDockerImage, updateTaskTomlWithDockerImage, generateDockerImageName } from "./utils/docker-utils.js";
 
 // Re-export cancelJob for use by other modules (e.g., API routes)
 export { cancelJob } from "./utils/process-management.js";
@@ -76,6 +77,21 @@ export async function processJob(job: QueuedJob) {
     // Find the actual task directory
     const actualTaskDir = await findTaskDirectory(taskDir);
     logImmediate('🔍', `Found task directory: ${actualTaskDir}`);
+    
+    // Build Docker image once before starting attempts
+    // This allows all attempts to reuse the same prebuilt image
+    const dockerImageName = generateDockerImageName(job.taskName);
+    try {
+      await buildDockerImage(actualTaskDir, dockerImageName);
+      // Update task.toml to use the prebuilt image
+      await updateTaskTomlWithDockerImage(actualTaskDir, dockerImageName);
+      logImmediate('✅', `Docker image built and configured for reuse: ${dockerImageName}`);
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      logImmediate('⚠️', `Failed to build Docker image, Harbor will build on-demand: ${errorMessage}`);
+      // Continue anyway - Harbor will build the image on each attempt if needed
+      // This is a graceful degradation
+    }
     
     // Determine model for concurrency adjustment
     const hasApiKey = process.env.OPENAI_API_KEY && process.env.OPENAI_API_KEY.length > 0;
