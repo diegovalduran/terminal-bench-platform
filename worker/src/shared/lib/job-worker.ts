@@ -116,6 +116,15 @@ export async function processJob(job: QueuedJob) {
         return;
       }
       
+      // Stagger attempt starts to avoid rate limits and resource contention
+      // Delay increases with attempt index to spread out API calls over time
+      // Default: 500ms between each attempt start (10 attempts spread over 4.5 seconds)
+      const staggerDelayMs = 500;
+      if (attemptIndex > 0) {
+        const delay = attemptIndex * staggerDelayMs;
+        await new Promise(resolve => setTimeout(resolve, delay));
+      }
+      
       // Acquire semaphore permit (waits if max attempts already running)
       await semaphore.acquire();
       
