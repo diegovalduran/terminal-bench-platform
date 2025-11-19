@@ -5,6 +5,24 @@ import { getToken } from "next-auth/jwt";
 export async function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
   
+  // Check for site password protection
+  const sitePasswordCookie = request.cookies.get("site-access");
+  const hasSiteAccess = sitePasswordCookie?.value === "authenticated";
+  
+  // Public routes that don't require site password
+  const passwordExemptRoutes = ["/password", "/api/password", "/api/auth"];
+  const isPasswordExempt = passwordExemptRoutes.some((route) => pathname.startsWith(route));
+  
+  // If no site password access and not on password page, redirect to password page
+  if (!hasSiteAccess && !isPasswordExempt) {
+    return NextResponse.redirect(new URL("/password", request.url));
+  }
+  
+  // If already on password page and has access, redirect to home
+  if (hasSiteAccess && pathname === "/password") {
+    return NextResponse.redirect(new URL("/", request.url));
+  }
+  
   // Log cookies for debugging
   const cookies = request.cookies.getAll();
   console.log("[Middleware] Request to:", pathname);
@@ -24,7 +42,7 @@ export async function middleware(request: NextRequest) {
   }
 
   // Public routes that don't require authentication
-  const publicRoutes = ["/login", "/register", "/api/auth"];
+  const publicRoutes = ["/login", "/register", "/api/auth", "/password", "/api/password"];
   const isPublicRoute = publicRoutes.some((route) => pathname.startsWith(route));
 
   // If accessing a public route, allow it
