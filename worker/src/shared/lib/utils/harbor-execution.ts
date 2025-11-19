@@ -32,6 +32,13 @@ export async function runHarborCommand(
   // Resolve Harbor executable path if command is 'harbor'
   const actualCommand = command === 'harbor' ? await getHarborPath() : command;
   
+  const commandStartTime = Date.now();
+  const { logImmediate } = await import("./logger.js");
+  
+  if (options.attemptIndex !== undefined) {
+    logImmediate('🚀', `[Attempt ${options.attemptIndex + 1}] Starting Harbor process (PID will be logged on exit)`);
+  }
+  
   return new Promise((resolve, reject) => {
     // Prepare environment variables for Harbor process
     // Explicitly pass OPENAI_API_KEY so Harbor can use it for Terminus 2
@@ -187,6 +194,11 @@ export async function runHarborCommand(
     child.on('exit', async (code, signal) => {
       clearTimeout(timeout);
       clearInterval(cancellationCheckInterval);
+      
+      const commandDuration = Date.now() - commandStartTime;
+      if (options.attemptIndex !== undefined) {
+        logImmediate('🏁', `[Attempt ${options.attemptIndex + 1}] Harbor process exited with code ${code}${signal ? ` (signal: ${signal})` : ''} after ${(commandDuration / 1000).toFixed(1)}s`);
+      }
       
       // Final upload of logs if streaming was enabled
       if (stdoutLogPath && stderrLogPath && options.attemptIndex !== undefined) {

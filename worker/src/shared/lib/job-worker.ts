@@ -1,4 +1,4 @@
-import { mkdir, readFile, rm, stat, unlink, writeFile } from "fs/promises";
+import { mkdir, readFile, readdir, rm, stat, unlink, writeFile } from "fs/promises";
 import { join } from "path";
 import extract from "extract-zip";
 import { QueuedJob } from "../types/runs.js";
@@ -110,6 +110,8 @@ export async function processJob(job: QueuedJob) {
     
     // Process a single attempt
     const processAttempt = async (attemptIndex: number) => {
+      const attemptStartTimestamp = Date.now();
+      
       // Check for cancellation before starting attempt
       if (await isJobCancelled(job.jobId)) {
         logImmediate('⏸️', `Job ${job.jobId.slice(0, 8)}... cancelled, skipping attempt ${attemptIndex + 1}`);
@@ -122,15 +124,21 @@ export async function processJob(job: QueuedJob) {
       const staggerDelayMs = 500;
       if (attemptIndex > 0) {
         const delay = attemptIndex * staggerDelayMs;
+        logImmediate('⏳', `Attempt ${attemptIndex + 1}/${job.runsRequested} waiting ${delay}ms before start (stagger delay)`);
         await new Promise(resolve => setTimeout(resolve, delay));
+        const staggerElapsed = Date.now() - attemptStartTimestamp;
+        logImmediate('✅', `Attempt ${attemptIndex + 1}/${job.runsRequested} stagger delay complete (${staggerElapsed}ms elapsed)`);
       }
       
       // Acquire semaphore permit (waits if max attempts already running)
+      const semaphoreWaitStart = Date.now();
       await semaphore.acquire();
+      const semaphoreWaitTime = Date.now() - semaphoreWaitStart;
       
       try {
         const waiters = semaphore.getWaitersCount();
-        logImmediate('🎯', `Attempt ${attemptIndex + 1}/${job.runsRequested} starting${waiters > 0 ? ` (${waiters} waiting)` : ''}`);
+        const totalWaitTime = Date.now() - attemptStartTimestamp;
+        logImmediate('🎯', `Attempt ${attemptIndex + 1}/${job.runsRequested} starting${waiters > 0 ? ` (${waiters} waiting)` : ''} (waited ${semaphoreWaitTime}ms, total ${totalWaitTime}ms from job start)`);
         
         const attempt = await createAttempt({
           jobId: job.jobId,
@@ -191,6 +199,7 @@ export async function processJob(job: QueuedJob) {
           ];
           
           const agentName = useTerminus2 ? `Terminus 2 (${model})` : 'Oracle agent';
+          const harborStartTime = Date.now();
           logImmediate('🤖', `Running Harbor with ${agentName} (Attempt ${attemptIndex + 1})`);
           
           const harborOutput = await runHarborCommand(
@@ -205,15 +214,21 @@ export async function processJob(job: QueuedJob) {
             }
           );
           
+          const harborDuration = Date.now() - harborStartTime;
+          logImmediate('⏱️', `Harbor command completed for Attempt ${attemptIndex + 1} in ${(harborDuration / 1000).toFixed(1)}s`);
+          
           // Extract stdout and stderr from Harbor output
           stdout = harborOutput.stdout;
           stderr = harborOutput.stderr;
           
-          if (stdout) logImmediate('📝', `Harbor stdout (first 200 chars): ${stdout.slice(0, 200)}...`);
+          if (stdout) {
+            const stdoutPreview = stdout.slice(0, 300);
+            logImmediate('📝', `Harbor stdout (${stdout.length} chars, first 300): ${stdoutPreview}${stdout.length > 300 ? '...' : ''}`);
+          }
           if (stderr) {
             // Log full stderr if it's short, otherwise first 500 chars
             const stderrPreview = stderr.length > 500 ? `${stderr.slice(0, 500)}...` : stderr;
-            logImmediate('⚠️', `Harbor stderr: ${stderrPreview}`);
+            logImmediate('⚠️', `Harbor stderr (${stderr.length} chars): ${stderrPreview}`);
           }
           
           // Check for rate limit errors in stdout/stderr
@@ -265,14 +280,26 @@ export async function processJob(job: QueuedJob) {
           }
           
           // Parse Harbor output using helper functions
+          logImmediate('🔍', `Attempt ${attemptIndex + 1}: Parsing Harbor output from ${attemptOutputDir}`);
           const latestRunDir = await findLatestHarborOutput(attemptOutputDir);
           logImmediate('📂', `Found latest run directory: ${latestRunDir}`);
           
           const trialDir = await findTrialDirectory(latestRunDir);
           logImmediate('🔬', `Trial directory: ${trialDir}`);
           
+          // Check agent directory before parsing
+          const agentDir = join(trialDir, "agent");
+          const agentDirExists = await stat(agentDir).then(() => true).catch(() => false);
+          if (agentDirExists) {
+            const agentFiles = await readdir(agentDir).catch(() => []);
+            logImmediate('📁', `Attempt ${attemptIndex + 1}: Agent directory exists with ${agentFiles.length} file(s)${agentFiles.length > 0 ? `: ${agentFiles.slice(0, 5).join(', ')}${agentFiles.length > 5 ? '...' : ''}` : ''}`);
+          } else {
+            logImmediate('⚠️', `Attempt ${attemptIndex + 1}: Agent directory does not exist at ${agentDir}`);
+          }
+          
           // Parse result.json
           const resultPath = join(trialDir, "result.json");
+          logImmediate('📄', `Attempt ${attemptIndex + 1}: Reading result.json from ${resultPath}`);
           const resultContent = await readFile(resultPath, "utf-8");
           const result: HarborTrialResult = JSON.parse(resultContent);
           
@@ -318,11 +345,12 @@ export async function processJob(job: QueuedJob) {
           
           // Diagnostic logging for 0/0 tests
           if (testsTotal === 0) {
-            logImmediate('⚠️', `No test results found (0/0) - investigating cause...`);
+            logImmediate('⚠️', `Attempt ${attemptIndex + 1}: No test results found (0/0) - investigating cause...`);
+            logImmediate('🔍', `Attempt ${attemptIndex + 1}: Harbor duration was ${(harborDuration / 1000).toFixed(1)}s, stdout length: ${stdout.length}, stderr length: ${stderr.length}`);
             
             // Log full Harbor stderr if available (might contain the actual error)
             if (stderr && stderr.length > 200) {
-              logImmediate('🔍', `Full Harbor stderr (for debugging): ${stderr.slice(0, 1000)}${stderr.length > 1000 ? '...' : ''}`);
+              logImmediate('🔍', `Attempt ${attemptIndex + 1}: Full Harbor stderr (for debugging): ${stderr.slice(0, 1000)}${stderr.length > 1000 ? '...' : ''}`);
             }
             
             // Check verifier directory
