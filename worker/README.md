@@ -70,7 +70,7 @@ The worker requires the same environment variables as the Next.js application:
 - `S3_ACCESS_KEY_ID` - AWS access key (required)
 - `S3_SECRET_ACCESS_KEY` - AWS secret key (required)
 - `OPENAI_API_KEY` - OpenAI API key (optional, for Terminus 2 agent)
-- `HARBOR_MODEL` - LLM model to use (default: `gpt-5-mini`)
+- `HARBOR_MODEL` - LLM model to use (default: `gpt-5`)
 - `WORKER_POLL_INTERVAL_MS` - Poll interval in milliseconds (default: 5000)
 - `MAX_CONCURRENT_ATTEMPTS_PER_JOB` - Max parallel attempts per job (default: 10 for premium models, 5 for cheaper models like `gpt-4o-mini`)
 - `ATTEMPT_STAGGER_DELAY_MS` - Delay between starting attempts in milliseconds (default: 2000ms) to avoid rate limits

@@ -95,7 +95,7 @@ export async function processJob(job: QueuedJob) {
     
     // Determine model for concurrency adjustment
     const hasApiKey = process.env.OPENAI_API_KEY && process.env.OPENAI_API_KEY.length > 0;
-    const model = process.env.HARBOR_MODEL || 'gpt-5-mini';
+    const model = process.env.HARBOR_MODEL || 'gpt-5';
     
     // Adjust concurrency based on model (cheaper models have stricter rate limits)
     const isCheapModel = model.includes('gpt-4o-mini') || model.includes('gpt-3.5');
@@ -459,9 +459,27 @@ export async function processJob(job: QueuedJob) {
             logPath: partialData.s3Url || undefined,
           };
 
+          // Check if this is a timeout error
+          const isTimeout = errorMessage.includes("timed out");
+          
           // Add test cases to metadata if available
           if (partialData.testCases.length > 0) {
             attemptUpdates.metadata = { testCases: partialData.testCases };
+          } else if (isTimeout && partialData.testsTotal === 0) {
+            // For timeout errors with no test cases recovered, add the timeout as a test case entry
+            // This allows the UI to display the timeout reason where test cases would normally appear
+            attemptUpdates.metadata = {
+              testCases: [
+                {
+                  name: "Execution Timeout",
+                  status: "failed",
+                  message: errorMessage,
+                  trace: `The Harbor agent execution exceeded the timeout limit (${parseInt(process.env.HARBOR_TIMEOUT_MS || "1800000", 10) / 1000 / 60} minutes). The agent may not have completed all test cases before timing out.`,
+                },
+              ],
+            };
+            // Update testsTotal to 1 so UI shows "0/1" instead of "0/0"
+            attemptUpdates.testsTotal = 1;
           }
 
           // Add error information to metadata
@@ -469,7 +487,7 @@ export async function processJob(job: QueuedJob) {
             attemptUpdates.metadata = {};
           }
           attemptUpdates.metadata.error = errorMessage;
-          attemptUpdates.metadata.errorType = errorMessage.includes("timed out") ? "TimeoutError" : 
+          attemptUpdates.metadata.errorType = isTimeout ? "TimeoutError" : 
                                              errorMessage.includes("cancelled") ? "CancellationError" : 
                                              "ExecutionError";
 

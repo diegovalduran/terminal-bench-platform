@@ -200,7 +200,7 @@ S3_SECRET_ACCESS_KEY=your-secret-access-key
 
 # OpenAI Configuration (Optional - for Terminus 2 agent)
 OPENAI_API_KEY=your-openai-api-key
-HARBOR_MODEL=gpt-5-mini
+HARBOR_MODEL=gpt-5
 
 # Worker Configuration (Optional - all have defaults)
 # Uncomment and modify only if you want to override defaults:

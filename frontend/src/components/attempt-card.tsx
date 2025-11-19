@@ -399,16 +399,16 @@ export function AttemptCard({ attempt, jobId }: AttemptCardProps) {
                         </div>
 
                         {/* Commands Section */}
-                        <div>
+                        <div className="w-full" style={{ maxWidth: '100%', overflow: 'hidden' }}>
                           <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-zinc-700">
                             Commands:
                           </p>
-                          <div className="h-[576px] w-full overflow-y-auto rounded-lg border border-zinc-300 bg-zinc-900">
-                            <div className="space-y-4 p-4 font-mono text-sm">
+                          <div className="h-[576px] w-full overflow-auto rounded-lg border border-zinc-300 bg-zinc-900" style={{ maxWidth: '100%' }}>
+                            <div className="space-y-4 p-4 font-mono text-sm" style={{ maxWidth: '100%', wordBreak: 'break-all' }}>
                               {episode.commands.map((command, idx) => (
-                                <div key={`${episode.id}-cmd-${idx}`} className="space-y-2">
-                                  <p className="whitespace-pre-wrap break-words text-emerald-400">$ {command.command}</p>
-                                  <pre className="whitespace-pre-wrap break-words text-zinc-100">
+                                <div key={`${episode.id}-cmd-${idx}`} className="space-y-2" style={{ maxWidth: '100%', overflow: 'hidden' }}>
+                                  <p className="whitespace-pre-wrap break-all text-emerald-400" style={{ wordBreak: 'break-all', overflowWrap: 'anywhere' }}>$ {command.command}</p>
+                                  <pre className="whitespace-pre-wrap break-all text-zinc-100" style={{ wordBreak: 'break-all', overflowWrap: 'anywhere', maxWidth: '100%', overflow: 'auto' }}>
                                     {command.output}
                                   </pre>
                                   {idx < episode.commands.length - 1 && (
