@@ -35,10 +35,16 @@ export async function runHarborCommand(
   return new Promise((resolve, reject) => {
     // Prepare environment variables for Harbor process
     // Explicitly pass OPENAI_API_KEY so Harbor can use it for Terminus 2
+    // If using OpenRouter models, also set OPENROUTER_API_KEY (LiteLLM requires it)
     const env = {
       ...process.env, // Inherit all environment variables
       // Explicitly ensure OPENAI_API_KEY is available if set
       ...(process.env.OPENAI_API_KEY ? { OPENAI_API_KEY: process.env.OPENAI_API_KEY } : {}),
+      // For OpenRouter models, LiteLLM looks for OPENROUTER_API_KEY
+      // Set it from OPENAI_API_KEY if not already set (allows using OPENAI_API_KEY for OpenRouter)
+      ...(process.env.OPENAI_API_KEY && !process.env.OPENROUTER_API_KEY 
+        ? { OPENROUTER_API_KEY: process.env.OPENAI_API_KEY } 
+        : {}),
     };
     
     const child = spawn(actualCommand, args, {
