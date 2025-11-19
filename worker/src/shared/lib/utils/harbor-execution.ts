@@ -234,6 +234,22 @@ export async function runHarborCommand(
       } else if (code === 0) {
         resolve({ stdout, stderr });
       } else {
+        // Log detailed exit error
+        const attemptLabel = options.attemptIndex !== undefined ? `Attempt ${options.attemptIndex + 1}` : 'unknown attempt';
+        logImmediate('❌', `Harbor exited with non-zero code ${code} for ${attemptLabel}`);
+        logImmediate('🔍', `Command: ${actualCommand} ${args.join(' ')}`);
+        logImmediate('🔍', `Exit code: ${code}`);
+        logImmediate('🔍', `Signal: ${signal || 'none'}`);
+        logImmediate('🔍', `Stdout length: ${stdout.length} chars`);
+        logImmediate('🔍', `Stderr length: ${stderr.length} chars`);
+        if (stdout) {
+          const stdoutPreview = stdout.length > 500 ? `${stdout.slice(0, 500)}...` : stdout;
+          logImmediate('🔍', `Stdout preview: ${stdoutPreview}`);
+        }
+        if (stderr) {
+          const stderrPreview = stderr.length > 500 ? `${stderr.slice(0, 500)}...` : stderr;
+          logImmediate('🔍', `Stderr preview: ${stderrPreview}`);
+        }
         reject(new Error(`Harbor exited with code ${code}\nStderr: ${stderr}`));
       }
     });
@@ -241,6 +257,27 @@ export async function runHarborCommand(
     child.on('error', (error) => {
       clearTimeout(timeout);
       clearInterval(cancellationCheckInterval);
+      
+      // Log detailed spawn error
+      const attemptLabel = options.attemptIndex !== undefined ? `Attempt ${options.attemptIndex + 1}` : 'unknown attempt';
+      logImmediate('❌', `Harbor spawn error for ${attemptLabel}`);
+      logImmediate('🔍', `Command attempted: ${actualCommand} ${args.join(' ')}`);
+      logImmediate('🔍', `Working directory: ${options.cwd}`);
+      logImmediate('🔍', `Error name: ${error.name}`);
+      logImmediate('🔍', `Error message: ${error.message}`);
+      logImmediate('🔍', `Error code: ${(error as any).code || 'N/A'}`);
+      logImmediate('🔍', `Error syscall: ${(error as any).syscall || 'N/A'}`);
+      logImmediate('🔍', `Error path: ${(error as any).path || 'N/A'}`);
+      if (error.stack) {
+        logImmediate('🔍', `Error stack: ${error.stack}`);
+      }
+      
+      // Check if it's a "command not found" error
+      if ((error as any).code === 'ENOENT') {
+        logImmediate('🔍', `ENOENT error: The command '${actualCommand}' was not found. Check PATH or executable path.`);
+        logImmediate('🔍', `Current PATH: ${process.env.PATH || 'not set'}`);
+      }
+      
       reject(error);
     });
   });

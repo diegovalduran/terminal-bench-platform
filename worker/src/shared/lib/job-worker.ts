@@ -171,12 +171,13 @@ export async function processJob(job: QueuedJob) {
         // Declare stdout/stderr outside try block so they're accessible in catch block
         let stdout = '';
         let stderr = '';
+        // Declare useTerminus2 outside try block so it's accessible in catch block
+        const useTerminus2 = hasApiKey;
         
         try {
           await mkdir(attemptOutputDir, { recursive: true });
           
           // Use model and hasApiKey from outer scope (already determined)
-          const useTerminus2 = hasApiKey;
           const isGPT5 = model.includes('gpt-5');
           
           if (useTerminus2) {
@@ -516,8 +517,38 @@ export async function processJob(job: QueuedJob) {
         } catch (error) {
           const attemptDuration = Date.now() - attemptStartTime;
           const errorMessage = error instanceof Error ? error.message : "Unknown error";
+          const errorStack = error instanceof Error ? error.stack : String(error);
+          const errorName = error instanceof Error ? error.name : typeof error;
           
-          logImmediate('❌', `Attempt ${attemptIndex + 1} failed after ${(attemptDuration / 1000).toFixed(1)}s: ${errorMessage}`);
+          // Log comprehensive error details
+          logImmediate('❌', `Attempt ${attemptIndex + 1} failed after ${(attemptDuration / 1000).toFixed(1)}s`);
+          logImmediate('🔍', `Error type: ${errorName}`);
+          logImmediate('🔍', `Error message: ${errorMessage}`);
+          if (errorStack) {
+            logImmediate('🔍', `Error stack: ${errorStack}`);
+          }
+          
+          // Log the Harbor command that was attempted
+          const harborCmd = useTerminus2
+            ? `harbor run --path ${actualTaskDir} --agent terminus-2 --model ${model} --env docker --jobs-dir ${attemptOutputDir} --n-concurrent 1`
+            : `harbor run --path ${actualTaskDir} --agent oracle --env docker --jobs-dir ${attemptOutputDir} --n-concurrent 1`;
+          logImmediate('🔍', `Harbor command attempted: ${harborCmd}`);
+          
+          // Log available stdout/stderr if we have it
+          if (stdout) {
+            const stdoutPreview = stdout.length > 1000 ? `${stdout.slice(0, 1000)}...` : stdout;
+            logImmediate('🔍', `Available stdout (${stdout.length} chars): ${stdoutPreview}`);
+          } else {
+            logImmediate('🔍', `No stdout captured`);
+          }
+          if (stderr) {
+            const stderrPreview = stderr.length > 1000 ? `${stderr.slice(0, 1000)}...` : stderr;
+            logImmediate('🔍', `Available stderr (${stderr.length} chars): ${stderrPreview}`);
+          } else {
+            logImmediate('🔍', `No stderr captured`);
+          }
+          
+          logImmediate('❌', `Attempt ${attemptIndex + 1} failed: ${errorMessage}`);
           
           // Check if this failure was due to cancellation
           const wasCancelled = errorMessage.includes("cancelled") || await isJobCancelled(job.jobId);
