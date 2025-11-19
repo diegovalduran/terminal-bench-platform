@@ -160,8 +160,10 @@ export async function findHarborExecutable(): Promise<string> {
     // 'which' failed, harbor not in PATH, try other locations
   }
   
-  // Fallback: Check possible Harbor venv locations (for local installs)
+  // Fallback: Check possible Harbor locations
   const possiblePaths = [
+    // Common pip/uv installation location (for EC2)
+    "/home/ubuntu/.local/bin/harbor",
     // Production: Harbor venv in project root (relative to worker/)
     resolve(process.cwd(), "..", "harbor", "venv", "bin", "harbor"),
     // Alternative: Harbor venv in project root (absolute from worker/)

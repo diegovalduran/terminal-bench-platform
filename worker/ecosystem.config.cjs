@@ -26,11 +26,15 @@ module.exports = {
       max_memory_restart: "2G", // Restart if memory exceeds 2GB
       env: {
         NODE_ENV: "production",
+        // Ensure Harbor is in PATH (for pip/uv installations in ~/.local/bin)
+        PATH: `${process.env.PATH || ""}:/home/ubuntu/.local/bin`,
         WORKER_POLL_INTERVAL_MS: "5000", // Poll every 5 seconds
         MAX_CONCURRENT_ATTEMPTS_PER_JOB: "10", // 10 parallel attempts per job
       },
       env_development: {
         NODE_ENV: "development",
+        // Ensure Harbor is in PATH (for pip/uv installations in ~/.local/bin)
+        PATH: `${process.env.PATH || ""}:/home/ubuntu/.local/bin`,
         WORKER_POLL_INTERVAL_MS: "3000", // Poll more frequently in dev
         MAX_CONCURRENT_ATTEMPTS_PER_JOB: "10",
       },
