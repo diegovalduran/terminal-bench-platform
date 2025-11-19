@@ -82,8 +82,11 @@ HARBOR_MODEL=gpt-5
 # Worker Configuration (Optional - all have defaults)
 # WORKER_POLL_INTERVAL_MS=5000  # Default: 5000ms (5 seconds)
 # MAX_CONCURRENT_ATTEMPTS_PER_JOB=10  # Default: 10 (or 5 for cheaper models)
-# ATTEMPT_STAGGER_DELAY_MS=2000  # Default: 2000ms (2 seconds)
 # HARBOR_TIMEOUT_MS=1800000  # Default: 1800000ms (30 minutes)
+
+# Docker Container Resource Limits (Optional - for 250 concurrent containers)
+# DOCKER_CPUS_PER_CONTAINER=1  # Default: 1 CPU per container (Docker time-slices across 16 vCPUs)
+# DOCKER_MEMORY_MB_PER_CONTAINER=384  # Default: 384MB per container
 ```
 
 ### 5. Start the Worker

@@ -114,11 +114,25 @@ export async function updateTaskTomlWithDockerImage(
     // Set docker_image to use prebuilt image
     config.environment.docker_image = imageName;
     
+    // Set CPU limit per container
+    // Note: Harbor's cpus field is typed as int, so we use 1 and rely on Docker time-slicing
+    // Docker will automatically time-slice 250 containers across 16 vCPUs
+    // This works because Harbor containers are I/O-bound (waiting on LLM API calls)
+    const cpusPerContainer = Math.max(1, parseInt(process.env.DOCKER_CPUS_PER_CONTAINER || "1", 10));
+    config.environment.cpus = cpusPerContainer;
+    
+    // Set memory limit per container (in MB)
+    // Default: 384MB per container (250 containers × 384MB = 96GB, fits in 124GB instance)
+    const memoryMbPerContainer = parseInt(process.env.DOCKER_MEMORY_MB_PER_CONTAINER || "384", 10);
+    config.environment.memory_mb = memoryMbPerContainer;
+    
+    logImmediate('⚙️', `Set container limits: ${cpusPerContainer} CPU, ${memoryMbPerContainer}MB memory`);
+    
     // Write back to task.toml
     const updatedToml = TOML.stringify(config);
     await writeFile(taskTomlPath, updatedToml, "utf-8");
     
-    logImmediate('✅', `Updated task.toml with docker_image: ${imageName}`);
+    logImmediate('✅', `Updated task.toml with docker_image: ${imageName} and resource limits`);
   } catch (error: any) {
     const errorMessage = error instanceof Error ? error.message : String(error);
     logImmediate('❌', `Failed to update task.toml: ${errorMessage}`);

@@ -73,7 +73,11 @@ The worker requires the same environment variables as the Next.js application:
 - `HARBOR_MODEL` - LLM model to use (default: `gpt-5`)
 - `WORKER_POLL_INTERVAL_MS` - Poll interval in milliseconds (default: 5000)
 - `MAX_CONCURRENT_ATTEMPTS_PER_JOB` - Max parallel attempts per job (default: 10 for premium models, 5 for cheaper models like `gpt-4o-mini`)
-- `ATTEMPT_STAGGER_DELAY_MS` - Delay between starting attempts in milliseconds (default: 2000ms) to avoid rate limits
+- `HARBOR_TIMEOUT_MS` - Timeout for Harbor command execution in milliseconds (default: 1800000 = 30 minutes)
+- `DOCKER_CPUS_PER_CONTAINER` - CPU limit per Docker container (integer, default: `1`)
+  Note: Harbor's cpus field is typed as int. Setting to 1 allows Docker to time-slice
+  250 containers across 16 vCPUs automatically (works because containers are I/O-bound).
+- `DOCKER_MEMORY_MB_PER_CONTAINER` - Memory limit per Docker container in MB (default: `384`)
 
 ## Graceful Shutdown
 
@@ -144,11 +148,10 @@ The worker automatically detects and handles OpenAI rate limit errors:
 
 - **Automatic detection**: Rate limit errors are detected in Harbor stderr and attempts are marked as failed
 - **Reduced concurrency**: Cheaper models (e.g., `gpt-4o-mini`, `gpt-3.5`) automatically use lower concurrency (5 instead of 10)
-- **Staggered starts**: Attempts start with a delay (`ATTEMPT_STAGGER_DELAY_MS`) to spread API calls over time
 - **If you still hit rate limits**:
-  - Increase `ATTEMPT_STAGGER_DELAY_MS` (e.g., 5000ms = 5 seconds between starts)
   - Reduce `MAX_CONCURRENT_ATTEMPTS_PER_JOB` (e.g., 3 for very strict limits)
   - Consider upgrading to a premium OpenAI account with higher rate limits
+  - Use a model with higher rate limits (e.g., `gpt-5` instead of `gpt-4o-mini`)
 
 ## Deployment
 
