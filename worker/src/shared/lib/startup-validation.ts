@@ -3,7 +3,7 @@
  * Validates environment variables and logs warnings/errors
  */
 
-import { validateEnvironment } from "./env-validation";
+import { validateEnvironment } from "./env-validation.js";
 
 let validated = false;
 
