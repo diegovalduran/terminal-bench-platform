@@ -351,6 +351,22 @@ export async function processJob(job: QueuedJob) {
             logImmediate('⚠️', `Attempt ${attemptIndex + 1}: No test results found (0/0) - investigating cause...`);
             logImmediate('🔍', `Attempt ${attemptIndex + 1}: Harbor duration was ${(harborDuration / 1000).toFixed(1)}s, stdout length: ${stdout.length}, stderr length: ${stderr.length}`);
             
+            // Check for exception_info in result.json (this tells us why the agent crashed)
+            if ((result as any).exception_info) {
+              const exceptionInfo = (result as any).exception_info;
+              logImmediate('🔍', `Attempt ${attemptIndex + 1}: Exception detected in result.json:`);
+              logImmediate('🔍', `  Exception type: ${exceptionInfo.exception_type || 'unknown'}`);
+              logImmediate('🔍', `  Exception message: ${exceptionInfo.exception_message || 'no message'}`);
+              if (exceptionInfo.exception_traceback) {
+                const tracebackPreview = exceptionInfo.exception_traceback.length > 1000 
+                  ? `${exceptionInfo.exception_traceback.slice(0, 1000)}...` 
+                  : exceptionInfo.exception_traceback;
+                logImmediate('🔍', `  Exception traceback: ${tracebackPreview}`);
+              }
+            } else {
+              logImmediate('🔍', `Attempt ${attemptIndex + 1}: No exception_info in result.json (agent may have completed but no tests ran)`);
+            }
+            
             // Log full Harbor stdout when debugging 0/0 tests (to see "adhoc" mode messages)
             if (stdout) {
               logImmediate('🔍', `Attempt ${attemptIndex + 1}: Full Harbor stdout (for debugging): ${stdout}`);
