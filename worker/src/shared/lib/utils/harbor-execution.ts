@@ -4,6 +4,7 @@ import { join } from "path";
 import { uploadFile } from "../s3-service.js";
 import { addProcessToJob, isJobCancelled } from "./process-management.js";
 import { findHarborExecutable } from "./file-utils.js";
+import { logImmediate } from "./logger.js";
 
 // Cache Harbor executable path to avoid repeated lookups
 let cachedHarborPath: string | null = null;
@@ -33,10 +34,9 @@ export async function runHarborCommand(
   const actualCommand = command === 'harbor' ? await getHarborPath() : command;
   
   const commandStartTime = Date.now();
-  const { logImmediate } = await import("./logger.js");
   
   if (options.attemptIndex !== undefined) {
-    logImmediate('🚀', `[Attempt ${options.attemptIndex + 1}] Starting Harbor process (PID will be logged on exit)`);
+    logImmediate('🚀', `[Attempt ${options.attemptIndex + 1}] Starting Harbor process`);
   }
   
   return new Promise((resolve, reject) => {

@@ -120,8 +120,9 @@ export async function processJob(job: QueuedJob) {
       
       // Stagger attempt starts to avoid rate limits and resource contention
       // Delay increases with attempt index to spread out API calls over time
-      // Default: 500ms between each attempt start (10 attempts spread over 4.5 seconds)
-      const staggerDelayMs = 500;
+      // Default: 1000ms between each attempt start (10 attempts spread over 9 seconds)
+      // This gives Docker containers more time to initialize and reduces startup race conditions
+      const staggerDelayMs = 1000;
       if (attemptIndex > 0) {
         const delay = attemptIndex * staggerDelayMs;
         logImmediate('⏳', `Attempt ${attemptIndex + 1}/${job.runsRequested} waiting ${delay}ms before start (stagger delay)`);
