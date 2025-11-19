@@ -3,17 +3,35 @@ import { readFile, writeFile, appendFile } from "fs/promises";
 import { join } from "path";
 import { uploadFile } from "../s3-service.js";
 import { addProcessToJob, isJobCancelled } from "./process-management.js";
+import { findHarborExecutable } from "./file-utils.js";
+
+// Cache Harbor executable path to avoid repeated lookups
+let cachedHarborPath: string | null = null;
+
+/**
+ * Get the Harbor executable path (cached)
+ */
+async function getHarborPath(): Promise<string> {
+  if (cachedHarborPath) {
+    return cachedHarborPath;
+  }
+  cachedHarborPath = await findHarborExecutable();
+  return cachedHarborPath;
+}
 
 /**
  * Run a Harbor command and capture stdout/stderr
  * Supports log streaming to S3 for real-time visibility
  */
-export function runHarborCommand(
+export async function runHarborCommand(
   command: string,
   args: string[],
   jobId: string,
   options: { cwd: string; timeout: number; logDir?: string; attemptIndex?: number }
 ): Promise<{ stdout: string; stderr: string }> {
+  // Resolve Harbor executable path if command is 'harbor'
+  const actualCommand = command === 'harbor' ? await getHarborPath() : command;
+  
   return new Promise((resolve, reject) => {
     // Prepare environment variables for Harbor process
     // Explicitly pass OPENAI_API_KEY so Harbor can use it for Terminus 2
@@ -23,7 +41,7 @@ export function runHarborCommand(
       ...(process.env.OPENAI_API_KEY ? { OPENAI_API_KEY: process.env.OPENAI_API_KEY } : {}),
     };
     
-    const child = spawn(command, args, {
+    const child = spawn(actualCommand, args, {
       cwd: options.cwd,
       detached: true, // Create new process group for easier killing
       stdio: ['ignore', 'pipe', 'pipe'],

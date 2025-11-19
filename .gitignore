@@ -31,4 +31,5 @@ worker/node_modules/
 worker/dist/
 worker/.env*.local
 worker/work/
+worker/logs/
 

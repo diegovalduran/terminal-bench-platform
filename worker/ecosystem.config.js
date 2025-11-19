@@ -16,8 +16,8 @@ module.exports = {
   apps: [
     {
       name: "terminal-bench-worker",
-      script: "npm",
-      args: "run dev",
+      script: "node",
+      args: "dist/worker.js",
       cwd: process.cwd(),
       instances: 1, // Run single instance (job queue handles concurrency)
       exec_mode: "fork",

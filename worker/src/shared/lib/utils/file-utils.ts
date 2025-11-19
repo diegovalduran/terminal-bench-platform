@@ -1,5 +1,5 @@
-import { readdir, readFile, stat } from "fs/promises";
-import { join } from "path";
+import { readdir, readFile, stat, access } from "fs/promises";
+import { join, resolve } from "path";
 
 /**
  * Extract S3 key from S3 URL
@@ -101,5 +101,61 @@ export async function findTrialDirectory(runDir: string): Promise<string> {
   
   // Harbor typically creates one trial directory per run
   return join(runDir, trialDirs[0]);
+}
+
+/**
+ * Find the Harbor executable path
+ * Checks multiple locations:
+ * 1. Harbor venv in project root (production)
+ * 2. System PATH (if installed globally)
+ * 3. Harbor venv in current working directory
+ * @returns Path to Harbor executable
+ */
+export async function findHarborExecutable(): Promise<string> {
+  // Possible Harbor locations
+  const possiblePaths = [
+    // Production: Harbor venv in project root (relative to worker/)
+    resolve(process.cwd(), "..", "harbor", "venv", "bin", "harbor"),
+    // Alternative: Harbor venv in project root (absolute from worker/)
+    resolve(process.cwd(), "..", "..", "harbor", "venv", "bin", "harbor"),
+    // If worker is in project root
+    resolve(process.cwd(), "harbor", "venv", "bin", "harbor"),
+    // System PATH (if installed globally) - check last
+    "harbor",
+  ];
+  
+  // Check each path (except "harbor" which needs special handling)
+  for (const harborPath of possiblePaths.slice(0, -1)) {
+    try {
+      await access(harborPath);
+      return harborPath;
+    } catch {
+      // Path doesn't exist, try next
+      continue;
+    }
+  }
+  
+  // If not found, try to find it in PATH using 'which' command
+  const { exec } = await import("child_process");
+  const { promisify } = await import("util");
+  const execAsync = promisify(exec);
+  
+  try {
+    const { stdout } = await execAsync("which harbor");
+    const path = stdout.trim();
+    if (path) {
+      return path;
+    }
+  } catch {
+    // 'which' failed, harbor not in PATH
+  }
+  
+  // Default to the most likely production path
+  const defaultPath = resolve(process.cwd(), "..", "harbor", "venv", "bin", "harbor");
+  throw new Error(
+    `Harbor executable not found. Checked: ${possiblePaths.slice(0, -1).join(", ")}. ` +
+    `Expected location: ${defaultPath}. ` +
+    `Make sure Harbor is installed in the virtual environment.`
+  );
 }
 
