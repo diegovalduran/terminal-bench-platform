@@ -1,3 +1,0 @@
-# Terminal-Bench Platform Dependencies
-# Harbor will be installed separately via git clone
-
