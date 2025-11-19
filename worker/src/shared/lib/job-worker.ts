@@ -103,12 +103,9 @@ export async function processJob(job: QueuedJob) {
     const maxConcurrentAttempts = parseInt(process.env.MAX_CONCURRENT_ATTEMPTS_PER_JOB || String(defaultConcurrency), 10);
     const semaphore = new Semaphore(maxConcurrentAttempts);
     
-    // Stagger delay between attempts (in milliseconds) to spread out API calls
-    const staggerDelayMs = parseInt(process.env.ATTEMPT_STAGGER_DELAY_MS || "2000", 10); // Default 2 seconds
-    
     logImmediate('⚡', `Running ${job.runsRequested} attempts with max ${maxConcurrentAttempts} concurrent`);
     if (hasApiKey && isCheapModel) {
-      logImmediate('⏱️', `Using reduced concurrency (${maxConcurrentAttempts}) and ${staggerDelayMs}ms stagger for ${model} to avoid rate limits`);
+      logImmediate('⏱️', `Using reduced concurrency (${maxConcurrentAttempts}) for ${model} to avoid rate limits`);
     }
     
     // Process a single attempt
@@ -196,7 +193,11 @@ export async function processJob(job: QueuedJob) {
           );
           
           if (stdout) logImmediate('📝', `Harbor stdout (first 200 chars): ${stdout.slice(0, 200)}...`);
-          if (stderr) logImmediate('⚠️', `Harbor stderr (first 200 chars): ${stderr.slice(0, 200)}...`);
+          if (stderr) {
+            // Log full stderr if it's short, otherwise first 500 chars
+            const stderrPreview = stderr.length > 500 ? `${stderr.slice(0, 500)}...` : stderr;
+            logImmediate('⚠️', `Harbor stderr: ${stderrPreview}`);
+          }
           
           // Check for rate limit errors in stderr
           const isRateLimitError = stderr && (
@@ -286,6 +287,11 @@ export async function processJob(job: QueuedJob) {
           // Diagnostic logging for 0/0 tests
           if (testsTotal === 0) {
             logImmediate('⚠️', `No test results found (0/0) - investigating cause...`);
+            
+            // Log full Harbor stderr if available (might contain the actual error)
+            if (stderr && stderr.length > 200) {
+              logImmediate('🔍', `Full Harbor stderr (for debugging): ${stderr.slice(0, 1000)}${stderr.length > 1000 ? '...' : ''}`);
+            }
             
             // Check verifier directory
             const verifierDir = join(trialDir, "verifier");
@@ -498,26 +504,9 @@ export async function processJob(job: QueuedJob) {
       }
     };
     
-    // Run all attempts with staggered starts to avoid rate limits
-    // Each attempt starts with a delay to spread out API calls over time
+    // Run all attempts in parallel (concurrency controlled by semaphore)
     const attemptPromises = Array.from({ length: job.runsRequested }, (_, i) => {
-      // Stagger start times: attempt 0 starts immediately, attempt 1 after staggerDelayMs, etc.
-      const startDelay = i * staggerDelayMs;
-      
-      if (startDelay > 0) {
-        logImmediate('⏳', `Attempt ${i + 1} will start in ${(startDelay / 1000).toFixed(1)}s (staggered)`);
-      }
-      
-      return new Promise<void>((resolve, reject) => {
-        setTimeout(async () => {
-          try {
-            await processAttempt(i);
-            resolve();
-          } catch (error) {
-            reject(error);
-          }
-        }, startDelay);
-      });
+      return processAttempt(i);
     });
     
     // Wait for all attempts to complete (or fail)

@@ -69,10 +69,14 @@ export async function buildDockerImage(
       maxBuffer: 10 * 1024 * 1024, // 10MB buffer for build output
     });
     
-    if (stderr && !stderr.includes("WARNING")) {
-      // Docker build often writes to stderr even on success
-      // Only log if it's not just warnings
-      logImmediate('⚠️', `Docker build stderr: ${stderr.slice(0, 200)}`);
+    // Docker build often writes progress to stderr even on success
+    // Only log stderr if it contains actual errors (not just normal build progress)
+    if (stderr) {
+      const hasError = /error|failed|fatal|denied|permission/i.test(stderr);
+      if (hasError && !stderr.includes("WARNING")) {
+        logImmediate('⚠️', `Docker build stderr: ${stderr.slice(0, 500)}`);
+      }
+      // Otherwise, stderr is just normal Docker build progress - ignore it
     }
     
     logImmediate('✅', `Docker image built successfully: ${imageName}`);
