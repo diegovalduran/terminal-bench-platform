@@ -82,6 +82,7 @@ export async function findLatestHarborOutput(outputDir: string): Promise<string>
 /**
  * Find the trial directory within a Harbor run directory
  * Harbor typically creates one trial directory per run
+ * @deprecated Use findAllTrialDirectories instead for --n-concurrent support
  */
 export async function findTrialDirectory(runDir: string): Promise<string> {
   const entries = await readdir(runDir);
@@ -101,6 +102,37 @@ export async function findTrialDirectory(runDir: string): Promise<string> {
   
   // Harbor typically creates one trial directory per run
   return join(runDir, trialDirs[0]);
+}
+
+/**
+ * Find all trial directories within a Harbor run directory
+ * When using --n-concurrent, Harbor creates multiple trial directories
+ * Each trial directory contains a result.json file
+ * @param runDir - Path to the Harbor run directory (timestamped directory)
+ * @returns Array of trial directory paths, sorted by name for consistent ordering
+ */
+export async function findAllTrialDirectories(runDir: string): Promise<string[]> {
+  const trialDirs: string[] = [];
+  const entries = await readdir(runDir);
+  
+  for (const name of entries) {
+    const entryPath = join(runDir, name);
+    const stats = await stat(entryPath).catch(() => null);
+    
+    if (stats?.isDirectory()) {
+      // Check if it's a trial directory (contains result.json)
+      const resultPath = join(entryPath, "result.json");
+      try {
+        await stat(resultPath);
+        trialDirs.push(entryPath);
+      } catch {
+        // Not a trial directory, skip (could be agent/, verifier/, or other files)
+      }
+    }
+  }
+  
+  // Sort by name to ensure consistent ordering
+  return trialDirs.sort();
 }
 
 /**

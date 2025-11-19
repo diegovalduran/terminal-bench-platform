@@ -33,11 +33,14 @@ export async function GET(request: NextRequest) {
       allJobs.filter((j) => j.status === "running").map((j) => j.ownerId)
     ).size;
 
+    // System max concurrent jobs (should match worker MAX_CONCURRENT_JOBS, default 25)
+    const systemMaxConcurrent = parseInt(process.env.MAX_CONCURRENT_JOBS || "25", 10);
+
     const systemStatus = {
       running: runningCount,
       queued: queuedCount,
-      maxConcurrent: 5, // System max
-      available: Math.max(0, 5 - runningCount),
+      maxConcurrent: systemMaxConcurrent, // System max (configurable, default 25)
+      available: Math.max(0, systemMaxConcurrent - runningCount),
       activeUsers,
     };
 
@@ -47,8 +50,8 @@ export async function GET(request: NextRequest) {
       const userJobs = allJobs.filter((j) => j.ownerId === session.user.id);
       const activeCount = userJobs.filter((j) => j.status === "running").length;
       const userQueuedCount = userJobs.filter((j) => j.status === "queued").length;
-      const maxActive = 5;
-      const maxQueued = 5;
+      const maxActive = 25;  // Increased from 5 to 25
+      const maxQueued = 25;  // Increased from 5 to 25
 
       userStatus = {
         hasActiveJob: activeCount > 0,

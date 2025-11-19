@@ -150,6 +150,10 @@ export async function processJob(job: QueuedJob) {
         const attemptStartTime = Date.now();
         const attemptOutputDir = join(outputDir, `attempt-${attemptIndex}`);
         
+        // Declare stdout/stderr outside try block so they're accessible in catch block
+        let stdout = '';
+        let stderr = '';
+        
         try {
           await mkdir(attemptOutputDir, { recursive: true });
           
@@ -180,7 +184,7 @@ export async function processJob(job: QueuedJob) {
           const agentName = useTerminus2 ? `Terminus 2 (${model})` : 'Oracle agent';
           logImmediate('🤖', `Running Harbor with ${agentName} (Attempt ${attemptIndex + 1})`);
           
-          const { stdout, stderr } = await runHarborCommand(
+          const harborOutput = await runHarborCommand(
             'harbor',
             harborArgs,
             job.jobId,
@@ -192,6 +196,10 @@ export async function processJob(job: QueuedJob) {
             }
           );
           
+          // Extract stdout and stderr from Harbor output
+          stdout = harborOutput.stdout;
+          stderr = harborOutput.stderr;
+          
           if (stdout) logImmediate('📝', `Harbor stdout (first 200 chars): ${stdout.slice(0, 200)}...`);
           if (stderr) {
             // Log full stderr if it's short, otherwise first 500 chars
@@ -199,13 +207,18 @@ export async function processJob(job: QueuedJob) {
             logImmediate('⚠️', `Harbor stderr: ${stderrPreview}`);
           }
           
-          // Check for rate limit errors in stderr
-          const isRateLimitError = stderr && (
+          // Check for rate limit errors in stdout/stderr
+          const isRateLimitError = (stdout && (
+            stdout.includes('RateLimitError') ||
+            stdout.includes('Rate limit reached') ||
+            stdout.includes('rate limit') ||
+            stdout.includes('429')
+          )) || (stderr && (
             stderr.includes('RateLimitError') ||
             stderr.includes('Rate limit reached') ||
             stderr.includes('rate limit') ||
             stderr.includes('429') // HTTP 429 status code
-          );
+          ));
           
           if (isRateLimitError) {
             logImmediate('🚫', `Rate limit error detected for Attempt ${attemptIndex + 1} - marking as failed`);
@@ -215,10 +228,20 @@ export async function processJob(job: QueuedJob) {
             await updateAttempt(attempt.id, {
               status: "failed",
               finishedAt: new Date(),
+              testsPassed: 0,
+              testsTotal: 1, // Show "0/1" instead of "0/0"
               metadata: {
                 error: "Rate limit exceeded - too many concurrent API calls to OpenAI",
                 errorType: "RateLimitError",
                 errorDetails: stderr.slice(0, 500), // Store first 500 chars of error
+                testCases: [
+                  {
+                    name: "API Rate Limit Exceeded",
+                    status: "failed",
+                    message: "OpenAI API rate limit was exceeded - the agent could not execute due to too many concurrent requests",
+                    trace: `The Harbor agent failed to execute because the OpenAI API rate limit was reached. This can happen when:\n- Too many concurrent attempts are running\n- The API key has reached its request quota\n- Using a model with higher token usage (like gpt-5) increases the likelihood of hitting rate limits\n\nTo resolve:\n- Reduce MAX_CONCURRENT_ATTEMPTS_PER_JOB\n- Wait before starting new jobs\n- Consider upgrading your OpenAI account tier\n\nError details: ${stderr ? stderr.slice(0, 500) : stdout.slice(0, 500)}`,
+                  },
+                ],
               },
             });
             
@@ -409,6 +432,34 @@ export async function processJob(job: QueuedJob) {
           // Add test cases to metadata if available
           if (testCases.length > 0) {
             attemptUpdates.metadata = { testCases };
+          } else if (testsTotal === 0) {
+            // Check for rate limit errors in stdout/stderr when we have 0/0 tests
+            const isRateLimitError = (stdout && (
+              stdout.includes('RateLimitError') ||
+              stdout.includes('Rate limit reached') ||
+              stdout.includes('rate limit') ||
+              stdout.includes('429')
+            )) || (stderr && (
+              stderr.includes('RateLimitError') ||
+              stderr.includes('Rate limit reached') ||
+              stderr.includes('rate limit') ||
+              stderr.includes('429')
+            ));
+
+            if (isRateLimitError) {
+              // Add rate limit error as a test case entry
+              attemptUpdates.metadata = {
+                testCases: [
+                  {
+                    name: "API Rate Limit Exceeded",
+                    status: "failed",
+                    message: "OpenAI API rate limit was exceeded - the agent could not execute due to too many concurrent requests",
+                    trace: `The Harbor agent failed to execute because the OpenAI API rate limit was reached. This can happen when:\n- Too many concurrent attempts are running\n- The API key has reached its request quota\n- Using a model with higher token usage (like gpt-5) increases the likelihood of hitting rate limits\n\nTo resolve:\n- Reduce MAX_CONCURRENT_ATTEMPTS_PER_JOB\n- Wait before starting new jobs\n- Consider upgrading your OpenAI account tier\n\nError details: ${stderr ? stderr.slice(0, 500) : stdout.slice(0, 500)}`,
+                  },
+                ],
+              };
+              attemptUpdates.testsTotal = 1; // Show "0/1" instead of "0/0"
+            }
           }
           
           await updateAttempt(attempt.id, attemptUpdates);
@@ -462,9 +513,35 @@ export async function processJob(job: QueuedJob) {
           // Check if this is a timeout error
           const isTimeout = errorMessage.includes("timed out");
           
+          // Check for rate limit errors in stdout/stderr (captured before the error)
+          const isRateLimitError = (stdout && (
+            stdout.includes('RateLimitError') ||
+            stdout.includes('Rate limit reached') ||
+            stdout.includes('rate limit') ||
+            stdout.includes('429')
+          )) || (stderr && (
+            stderr.includes('RateLimitError') ||
+            stderr.includes('Rate limit reached') ||
+            stderr.includes('rate limit') ||
+            stderr.includes('429')
+          ));
+          
           // Add test cases to metadata if available
           if (partialData.testCases.length > 0) {
             attemptUpdates.metadata = { testCases: partialData.testCases };
+          } else if (isRateLimitError && partialData.testsTotal === 0) {
+            // For rate limit errors with no test cases recovered, add the rate limit as a test case entry
+            attemptUpdates.metadata = {
+              testCases: [
+                {
+                  name: "API Rate Limit Exceeded",
+                  status: "failed",
+                  message: "OpenAI API rate limit was exceeded - the agent could not execute due to too many concurrent requests",
+                  trace: `The Harbor agent failed to execute because the OpenAI API rate limit was reached. This can happen when:\n- Too many concurrent attempts are running\n- The API key has reached its request quota\n- Using a model with higher token usage (like gpt-5) increases the likelihood of hitting rate limits\n\nTo resolve:\n- Reduce MAX_CONCURRENT_ATTEMPTS_PER_JOB\n- Wait before starting new jobs\n- Consider upgrading your OpenAI account tier\n\nError details: ${errorMessage}`,
+                },
+              ],
+            };
+            attemptUpdates.testsTotal = 1; // Show "0/1" instead of "0/0"
           } else if (isTimeout && partialData.testsTotal === 0) {
             // For timeout errors with no test cases recovered, add the timeout as a test case entry
             // This allows the UI to display the timeout reason where test cases would normally appear
@@ -487,7 +564,8 @@ export async function processJob(job: QueuedJob) {
             attemptUpdates.metadata = {};
           }
           attemptUpdates.metadata.error = errorMessage;
-          attemptUpdates.metadata.errorType = isTimeout ? "TimeoutError" : 
+          attemptUpdates.metadata.errorType = isRateLimitError ? "RateLimitError" :
+                                             isTimeout ? "TimeoutError" : 
                                              errorMessage.includes("cancelled") ? "CancellationError" : 
                                              "ExecutionError";
 

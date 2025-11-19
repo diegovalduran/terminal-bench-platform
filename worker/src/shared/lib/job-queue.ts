@@ -214,5 +214,11 @@ class JobQueue {
 }
 
 // Singleton instance
-export const jobQueue = new JobQueue();
+// Make maxConcurrent configurable via environment variable (default: 25 for 25 concurrent jobs)
+const maxConcurrentJobs = parseInt(process.env.MAX_CONCURRENT_JOBS || "25", 10);
+export const jobQueue = new JobQueue(
+  maxConcurrentJobs,  // System-wide max concurrent jobs
+  25,  // maxQueuedPerUser (increased from 5 to 25)
+  25   // maxActivePerUser (increased from 5 to 25)
+);
 
