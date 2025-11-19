@@ -346,6 +346,94 @@ export function AttemptCard({ attempt, jobId }: AttemptCardProps) {
           </AccordionItem>
         </Accordion>
 
+        {/* Error Information Section - Show if attempt failed with error metadata */}
+        {attempt.status === "failed" && attempt.metadata?.error && (
+          <Accordion type="single" collapsible>
+            <AccordionItem value="error-details" className="border-none">
+              <AccordionTrigger className="hover:no-underline">
+                <div className="flex w-full items-center justify-between pr-4">
+                  <p className="text-sm font-semibold text-rose-800">
+                    Error Details
+                  </p>
+                  {attempt.metadata.errorType && (
+                    <Badge variant="outline" className="bg-rose-50 text-rose-700 border-rose-200">
+                      {attempt.metadata.errorType}
+                    </Badge>
+                  )}
+                </div>
+              </AccordionTrigger>
+              <AccordionContent className="pt-3">
+                <div className="space-y-3 rounded-lg border border-rose-200 bg-rose-50 p-4">
+                  {/* Check if there's a test case with a detailed trace (for rate limit/timeout errors) */}
+                  {attempt.metadata?.testCases && attempt.metadata.testCases.length > 0 && 
+                   attempt.metadata.testCases[0].trace ? (
+                    <>
+                      {/* Test Case Name and Message */}
+                      <div>
+                        <p className="mb-1 text-xs font-semibold text-rose-700">Error:</p>
+                        <p className="mb-2 text-sm font-semibold text-rose-900">
+                          {attempt.metadata.testCases[0].name}
+                        </p>
+                        {attempt.metadata.testCases[0].message && (
+                          <p className="mb-3 text-sm text-rose-800">
+                            {attempt.metadata.testCases[0].message}
+                          </p>
+                        )}
+                      </div>
+                      
+                      {/* Full Trace */}
+                      <div>
+                        <p className="mb-1 text-xs font-semibold text-rose-700">Trace:</p>
+                        <pre className="max-h-96 overflow-y-auto whitespace-pre-wrap break-words rounded bg-zinc-900 p-3 font-mono text-xs text-zinc-100">
+                          {attempt.metadata.testCases[0].trace}
+                        </pre>
+                      </div>
+                    </>
+                  ) : (
+                    <>
+                      {/* Error Message */}
+                      <div>
+                        <p className="mb-1 text-xs font-semibold text-rose-700">Error Message:</p>
+                        <p className="text-sm font-mono text-rose-900">{attempt.metadata.error}</p>
+                      </div>
+                      
+                      {/* Error Stack Trace */}
+                      {attempt.metadata.errorStack && (
+                        <div>
+                          <p className="mb-1 text-xs font-semibold text-rose-700">Stack Trace:</p>
+                          <pre className="max-h-96 overflow-y-auto whitespace-pre-wrap break-words rounded bg-rose-900 p-3 font-mono text-xs text-rose-100">
+                            {attempt.metadata.errorStack}
+                          </pre>
+                        </div>
+                      )}
+                    </>
+                  )}
+                  
+                  {/* Stdout Preview */}
+                  {attempt.metadata.stdoutPreview && (
+                    <div>
+                      <p className="mb-1 text-xs font-semibold text-rose-700">Stdout Preview:</p>
+                      <pre className="max-h-64 overflow-y-auto whitespace-pre-wrap break-words rounded bg-zinc-900 p-3 font-mono text-xs text-zinc-100">
+                        {attempt.metadata.stdoutPreview}
+                      </pre>
+                    </div>
+                  )}
+                  
+                  {/* Stderr Preview */}
+                  {attempt.metadata.stderrPreview && (
+                    <div>
+                      <p className="mb-1 text-xs font-semibold text-rose-700">Stderr Preview:</p>
+                      <pre className="max-h-64 overflow-y-auto whitespace-pre-wrap break-words rounded bg-zinc-900 p-3 font-mono text-xs text-zinc-100">
+                        {attempt.metadata.stderrPreview}
+                      </pre>
+                    </div>
+                  )}
+                </div>
+              </AccordionContent>
+            </AccordionItem>
+          </Accordion>
+        )}
+
         <Separator />
 
         {/* Episodes Section - Collapsible */}

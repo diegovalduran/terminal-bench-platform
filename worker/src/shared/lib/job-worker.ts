@@ -13,6 +13,7 @@ import { parseTrajectory, HarborTrialResult } from "./utils/trajectory-parser.js
 import { recoverPartialData } from "./utils/data-recovery.js";
 import { logImmediate } from "./utils/logger.js";
 import { buildDockerImage, updateTaskTomlWithDockerImage, generateDockerImageName } from "./utils/docker-utils.js";
+import { rateLimitManager } from "./rate-limit-manager.js";
 
 // Re-export cancelJob for use by other modules (e.g., API routes)
 export { cancelJob } from "./utils/process-management.js";
@@ -100,8 +101,16 @@ export async function processJob(job: QueuedJob) {
     // Adjust concurrency based on model (cheaper models have stricter rate limits)
     const isCheapModel = model.includes('gpt-4o-mini') || model.includes('gpt-3.5');
     const defaultConcurrency = isCheapModel ? 5 : 10; // Lower concurrency for cheaper models
-    const maxConcurrentAttempts = parseInt(process.env.MAX_CONCURRENT_ATTEMPTS_PER_JOB || String(defaultConcurrency), 10);
+    const baseConcurrency = parseInt(process.env.MAX_CONCURRENT_ATTEMPTS_PER_JOB || String(defaultConcurrency), 10);
+    
+    // Apply rate limit manager's adaptive concurrency multiplier
+    const concurrencyMultiplier = rateLimitManager.getConcurrencyMultiplier();
+    const maxConcurrentAttempts = Math.max(1, Math.floor(baseConcurrency * concurrencyMultiplier));
     const semaphore = new Semaphore(maxConcurrentAttempts);
+    
+    if (concurrencyMultiplier < 1.0) {
+      logImmediate('⚠️', `Rate limit protection: Using reduced concurrency ${maxConcurrentAttempts} (${(concurrencyMultiplier * 100).toFixed(0)}% of base ${baseConcurrency})`);
+    }
     
     logImmediate('⚡', `Running ${job.runsRequested} attempts with max ${maxConcurrentAttempts} concurrent`);
     if (hasApiKey && isCheapModel) {
@@ -122,13 +131,18 @@ export async function processJob(job: QueuedJob) {
       // Delay increases with attempt index to spread out API calls over time
       // Default: 1000ms between each attempt start (10 attempts spread over 9 seconds)
       // This gives Docker containers more time to initialize and reduces startup race conditions
-      const staggerDelayMs = 1000;
-      if (attemptIndex > 0) {
-        const delay = attemptIndex * staggerDelayMs;
-        logImmediate('⏳', `Attempt ${attemptIndex + 1}/${job.runsRequested} waiting ${delay}ms before start (stagger delay)`);
-        await new Promise(resolve => setTimeout(resolve, delay));
-        const staggerElapsed = Date.now() - attemptStartTimestamp;
-        logImmediate('✅', `Attempt ${attemptIndex + 1}/${job.runsRequested} stagger delay complete (${staggerElapsed}ms elapsed)`);
+      const baseStaggerDelayMs = parseInt(process.env.ATTEMPT_STAGGER_DELAY_MS || "1000", 10);
+      const rateLimitDelay = rateLimitManager.getRecommendedDelay();
+      const staggerDelayMs = baseStaggerDelayMs + rateLimitDelay;
+      
+      if (attemptIndex > 0 || rateLimitDelay > 0) {
+        const delay = attemptIndex > 0 ? attemptIndex * staggerDelayMs : rateLimitDelay;
+        if (delay > 0) {
+          logImmediate('⏳', `Attempt ${attemptIndex + 1}/${job.runsRequested} waiting ${delay}ms before start${rateLimitDelay > 0 ? ` (${rateLimitDelay}ms rate limit protection)` : ' (stagger delay)'}`);
+          await new Promise(resolve => setTimeout(resolve, delay));
+          const staggerElapsed = Date.now() - attemptStartTimestamp;
+          logImmediate('✅', `Attempt ${attemptIndex + 1}/${job.runsRequested} stagger delay complete (${staggerElapsed}ms elapsed)`);
+        }
       }
       
       // Acquire semaphore permit (waits if max attempts already running)
@@ -248,7 +262,10 @@ export async function processJob(job: QueuedJob) {
           ));
           
           if (isRateLimitError) {
-            logImmediate('🚫', `Rate limit error detected for Attempt ${attemptIndex + 1} - marking as failed`);
+            // Record rate limit error for adaptive concurrency management
+            rateLimitManager.recordRateLimit(job.jobId, attemptIndex);
+            
+            logImmediate('🚫', `Rate limit error detected for Attempt ${attemptIndex + 1} - adaptive concurrency will be reduced`);
             const attemptDuration = Date.now() - attemptStartTime;
             
             // Mark attempt as failed with rate limit error
@@ -508,14 +525,20 @@ export async function processJob(job: QueuedJob) {
             ));
 
             if (isRateLimitError) {
+              // Record rate limit error for adaptive concurrency management
+              rateLimitManager.recordRateLimit(job.jobId, attemptIndex);
+              
               // Add rate limit error as a test case entry
+              const errorDetails = stderr && stderr.length > 0 
+                ? stderr.slice(0, 2000) 
+                : (stdout && stdout.length > 0 ? stdout.slice(0, 2000) : 'No error details available');
               attemptUpdates.metadata = {
                 testCases: [
                   {
                     name: "API Rate Limit Exceeded",
                     status: "failed",
                     message: "OpenAI API rate limit was exceeded - the agent could not execute due to too many concurrent requests",
-                    trace: `The Harbor agent failed to execute because the OpenAI API rate limit was reached. This can happen when:\n- Too many concurrent attempts are running\n- The API key has reached its request quota\n- Using a model with higher token usage (like gpt-5) increases the likelihood of hitting rate limits\n\nTo resolve:\n- Reduce MAX_CONCURRENT_ATTEMPTS_PER_JOB\n- Wait before starting new jobs\n- Consider upgrading your OpenAI account tier\n\nError details: ${stderr ? stderr.slice(0, 500) : stdout.slice(0, 500)}`,
+                    trace: `The Harbor agent failed to execute because the OpenAI API rate limit was reached. This can happen when:\n- Too many concurrent attempts are running\n- The API key has reached its request quota\n- Using a model with higher token usage (like gpt-5) increases the likelihood of hitting rate limits\n\nTo resolve:\n- Reduce MAX_CONCURRENT_ATTEMPTS_PER_JOB\n- Wait before starting new jobs\n- Consider upgrading your OpenAI account tier\n\nError details:\n${errorDetails}${errorDetails.length >= 2000 ? '\n\n(truncated...)' : ''}`,
                   },
                 ],
               };
@@ -621,14 +644,20 @@ export async function processJob(job: QueuedJob) {
           if (partialData.testCases.length > 0) {
             attemptUpdates.metadata = { testCases: partialData.testCases };
           } else if (isRateLimitError && partialData.testsTotal === 0) {
+            // Record rate limit error for adaptive concurrency management
+            rateLimitManager.recordRateLimit(job.jobId, attemptIndex);
+            
             // For rate limit errors with no test cases recovered, add the rate limit as a test case entry
+            const errorDetails = stderr && stderr.length > 0 
+              ? stderr.slice(0, 2000) 
+              : (stdout && stdout.length > 0 ? stdout.slice(0, 2000) : errorMessage);
             attemptUpdates.metadata = {
               testCases: [
                 {
                   name: "API Rate Limit Exceeded",
                   status: "failed",
                   message: "OpenAI API rate limit was exceeded - the agent could not execute due to too many concurrent requests",
-                  trace: `The Harbor agent failed to execute because the OpenAI API rate limit was reached. This can happen when:\n- Too many concurrent attempts are running\n- The API key has reached its request quota\n- Using a model with higher token usage (like gpt-5) increases the likelihood of hitting rate limits\n\nTo resolve:\n- Reduce MAX_CONCURRENT_ATTEMPTS_PER_JOB\n- Wait before starting new jobs\n- Consider upgrading your OpenAI account tier\n\nError details: ${errorMessage}`,
+                  trace: `The Harbor agent failed to execute because the OpenAI API rate limit was reached. This can happen when:\n- Too many concurrent attempts are running\n- The API key has reached its request quota\n- Using a model with higher token usage (like gpt-5) increases the likelihood of hitting rate limits\n\nTo resolve:\n- Reduce MAX_CONCURRENT_ATTEMPTS_PER_JOB\n- Wait before starting new jobs\n- Consider upgrading your OpenAI account tier\n\nError details:\n${errorDetails}${errorDetails.length >= 2000 ? '\n\n(truncated...)' : ''}`,
                 },
               ],
             };
@@ -659,6 +688,21 @@ export async function processJob(job: QueuedJob) {
                                              isTimeout ? "TimeoutError" : 
                                              errorMessage.includes("cancelled") ? "CancellationError" : 
                                              "ExecutionError";
+          
+          // Store full error stack for debugging
+          attemptUpdates.metadata.errorStack = errorStack || undefined;
+          
+          // Store stdout/stderr previews for debugging
+          if (stdout) {
+            attemptUpdates.metadata.stdoutPreview = stdout.length > 2000 
+              ? `${stdout.slice(0, 2000)}...` 
+              : stdout;
+          }
+          if (stderr) {
+            attemptUpdates.metadata.stderrPreview = stderr.length > 2000 
+              ? `${stderr.slice(0, 2000)}...` 
+              : stderr;
+          }
 
           // Update attempt with failure status and partial data
           await updateAttempt(attempt.id, attemptUpdates);

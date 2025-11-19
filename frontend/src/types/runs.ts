@@ -34,6 +34,11 @@ export interface Attempt {
   logPath?: string;
   metadata?: {
     testCases?: TestCase[];
+    error?: string;
+    errorType?: string;
+    errorStack?: string;
+    stdoutPreview?: string;
+    stderrPreview?: string;
   };
   episodes: Episode[];
 }
