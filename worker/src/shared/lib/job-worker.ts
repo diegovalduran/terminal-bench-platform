@@ -224,8 +224,9 @@ export async function processJob(job: QueuedJob) {
           stderr = harborOutput.stderr;
           
           if (stdout) {
-            const stdoutPreview = stdout.slice(0, 300);
-            logImmediate('📝', `Harbor stdout (${stdout.length} chars, first 300): ${stdoutPreview}${stdout.length > 300 ? '...' : ''}`);
+            // Log more of stdout to see full Harbor output (especially for debugging "adhoc" mode)
+            const stdoutPreview = stdout.length > 2000 ? `${stdout.slice(0, 2000)}...` : stdout;
+            logImmediate('📝', `Harbor stdout (${stdout.length} chars): ${stdoutPreview}`);
           }
           if (stderr) {
             // Log full stderr if it's short, otherwise first 500 chars
@@ -350,9 +351,14 @@ export async function processJob(job: QueuedJob) {
             logImmediate('⚠️', `Attempt ${attemptIndex + 1}: No test results found (0/0) - investigating cause...`);
             logImmediate('🔍', `Attempt ${attemptIndex + 1}: Harbor duration was ${(harborDuration / 1000).toFixed(1)}s, stdout length: ${stdout.length}, stderr length: ${stderr.length}`);
             
+            // Log full Harbor stdout when debugging 0/0 tests (to see "adhoc" mode messages)
+            if (stdout) {
+              logImmediate('🔍', `Attempt ${attemptIndex + 1}: Full Harbor stdout (for debugging): ${stdout}`);
+            }
+            
             // Log full Harbor stderr if available (might contain the actual error)
-            if (stderr && stderr.length > 200) {
-              logImmediate('🔍', `Attempt ${attemptIndex + 1}: Full Harbor stderr (for debugging): ${stderr.slice(0, 1000)}${stderr.length > 1000 ? '...' : ''}`);
+            if (stderr && stderr.length > 0) {
+              logImmediate('🔍', `Attempt ${attemptIndex + 1}: Full Harbor stderr (for debugging): ${stderr}`);
             }
             
             // Check verifier directory
